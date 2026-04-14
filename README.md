@@ -5,6 +5,7 @@ Offline environmental monitor firmware for LilyGO T-Display-S3.
 The project displays live environmental data on a 320x170 landscape UI built with LVGL, uses BME680 + Bosch BSEC2 for IAQ processing, supports swipe navigation via capacitive touch, and includes smart power behavior (screen timeout + wake input).
 
 ## Design Prototype
+
 ![UI Design](UI%20Design%20Prototype.png)
 
 ## Main Functions
