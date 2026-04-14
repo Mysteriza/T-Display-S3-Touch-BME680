@@ -155,3 +155,7 @@ Managed in platformio.ini:
 - Added swipe-only page navigation and smart display timeout.
 - Added BSEC2 state persistence to NVS.
 - Added complete PlatformIO dependency and build configuration.
+- Added battery percentage indicator at top-center on all pages using built-in board ADC battery sensing.
+- Updated Page 03 system info cadence: CPU Load and Storage now refresh every 5 seconds for lower power impact.
+- Updated Page 03 storage text to numeric free/total MB format without float printf.
+- Updated gas resistance unit fallback to ASCII `kOhm` for font compatibility on-board.

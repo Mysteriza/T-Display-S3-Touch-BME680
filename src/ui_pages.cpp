@@ -5,6 +5,7 @@
 #include <TouchDrv.hpp>
 #include <Wire.h>
 #include <esp_heap_caps.h>
+#include <esp_adc_cal.h>
 #include <esp_timer.h>
 #include <lvgl.h>
 
@@ -78,6 +79,7 @@ namespace
 
     lv_obj_t *g_iaq_arc = nullptr;
     lv_obj_t *g_iaq_value = nullptr;
+    lv_obj_t *g_iaq_number = nullptr;
     lv_obj_t *g_iaq_status = nullptr;
     lv_obj_t *g_iaq_risk = nullptr;
     lv_obj_t *g_gas_value = nullptr;
@@ -88,8 +90,13 @@ namespace
     lv_obj_t *g_uptime_big = nullptr;
     lv_obj_t *g_cpu_value = nullptr;
     lv_obj_t *g_storage_value = nullptr;
+    lv_obj_t *g_battery_labels[3] = {nullptr, nullptr, nullptr};
 
     uint32_t g_last_ui_refresh_ms = 0;
+    uint32_t g_last_sys_info_refresh_ms = 0;
+
+    esp_adc_cal_characteristics_t g_bat_adc_chars;
+    bool g_bat_adc_ready = false;
 
     int32_t clamp_i32(int32_t value, int32_t low, int32_t high)
     {
@@ -110,6 +117,77 @@ namespace
         const uint32_t minutes = (uptime_seconds % 3600U) / 60U;
         const uint32_t seconds = uptime_seconds % 60U;
         snprintf(out, out_len, "%02lu:%02lu:%02lu", hours, minutes, seconds);
+    }
+
+    uint8_t battery_percent_from_mv(uint32_t mv)
+    {
+        if (mv <= BATTERY_MIN_MV)
+        {
+            return 0;
+        }
+        if (mv >= BATTERY_MAX_MV)
+        {
+            return 100;
+        }
+        return static_cast<uint8_t>(((mv - BATTERY_MIN_MV) * 100U) / (BATTERY_MAX_MV - BATTERY_MIN_MV));
+    }
+
+    uint32_t read_battery_mv(bool *has_battery)
+    {
+        if (!g_bat_adc_ready)
+        {
+            analogReadResolution(12);
+            analogSetPinAttenuation(PIN_BAT_VOLT, ADC_11db);
+            esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, 1100, &g_bat_adc_chars);
+            g_bat_adc_ready = true;
+        }
+
+        const uint32_t raw = static_cast<uint32_t>(analogRead(PIN_BAT_VOLT));
+        const uint32_t mv = esp_adc_cal_raw_to_voltage(raw, &g_bat_adc_chars) * 2U;
+        const bool present = mv <= BATTERY_ABSENT_MV;
+        if (has_battery != nullptr)
+        {
+            *has_battery = present;
+        }
+        return mv;
+    }
+
+    void create_battery_label(lv_obj_t *parent, uint8_t page_idx)
+    {
+        if (page_idx > 2)
+        {
+            return;
+        }
+
+        g_battery_labels[page_idx] = lv_label_create(parent);
+        lv_label_set_text(g_battery_labels[page_idx], LV_SYMBOL_BATTERY_EMPTY " --%");
+        lv_obj_set_style_text_color(g_battery_labels[page_idx], lv_color_hex(COLOR_TEXT_DIM), 0);
+        lv_obj_set_style_text_font(g_battery_labels[page_idx], &lv_font_montserrat_12, 0);
+        lv_obj_align(g_battery_labels[page_idx], LV_ALIGN_TOP_MID, 0, 8);
+    }
+
+    void update_battery_labels()
+    {
+        bool has_battery = false;
+        const uint32_t bat_mv = read_battery_mv(&has_battery);
+        const uint8_t bat_pct = battery_percent_from_mv(bat_mv);
+
+        for (uint8_t i = 0; i < 3; ++i)
+        {
+            if (g_battery_labels[i] == nullptr)
+            {
+                continue;
+            }
+
+            if (has_battery)
+            {
+                lv_label_set_text_fmt(g_battery_labels[i], LV_SYMBOL_BATTERY_FULL " %u%%", bat_pct);
+            }
+            else
+            {
+                lv_label_set_text(g_battery_labels[i], LV_SYMBOL_BATTERY_EMPTY " USB");
+            }
+        }
     }
 
     bool probe_touch_addr(uint8_t address)
@@ -253,6 +331,8 @@ namespace
         lv_obj_set_style_text_font(header_right, &lv_font_montserrat_12, 0);
         lv_obj_align(header_right, LV_ALIGN_TOP_RIGHT, -8, 8);
 
+        create_battery_label(parent, 0);
+
         create_card(parent, 8, 30, 148, 58, "TEMP", &g_temp_value);
         create_card(parent, 164, 30, 148, 58, "HUMIDITY", &g_hum_value);
         create_card(parent, 8, 94, 148, 58, "PRESSURE", &g_press_value);
@@ -278,6 +358,8 @@ namespace
         lv_obj_set_style_text_color(header_right, lv_color_hex(COLOR_TEXT_DIM), 0);
         lv_obj_set_style_text_font(header_right, &lv_font_montserrat_12, 0);
         lv_obj_align(header_right, LV_ALIGN_TOP_RIGHT, -8, 8);
+
+        create_battery_label(parent, 1);
 
         g_gas_value = lv_label_create(parent);
         lv_label_set_text(g_gas_value, "Gas res.\n--.- kOhm");
@@ -306,10 +388,16 @@ namespace
         lv_obj_clear_flag(g_iaq_arc, LV_OBJ_FLAG_CLICKABLE);
 
         g_iaq_value = lv_label_create(parent);
-        lv_label_set_text(g_iaq_value, "IAQ\n0");
-        lv_obj_set_style_text_font(g_iaq_value, &lv_font_montserrat_32, 0);
+        lv_label_set_text(g_iaq_value, "IAQ");
+        lv_obj_set_style_text_font(g_iaq_value, &lv_font_montserrat_18, 0);
         lv_obj_set_style_text_color(g_iaq_value, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align_to(g_iaq_value, g_iaq_arc, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_align_to(g_iaq_value, g_iaq_arc, LV_ALIGN_CENTER, 0, -14);
+
+        g_iaq_number = lv_label_create(parent);
+        lv_label_set_text(g_iaq_number, "0");
+        lv_obj_set_style_text_font(g_iaq_number, &lv_font_montserrat_32, 0);
+        lv_obj_set_style_text_color(g_iaq_number, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align_to(g_iaq_number, g_iaq_arc, LV_ALIGN_CENTER, 0, 18);
 
         g_iaq_status = lv_label_create(parent);
         lv_label_set_text(g_iaq_status, "Status\n-");
@@ -348,6 +436,8 @@ namespace
         lv_obj_set_style_text_font(header_right, &lv_font_montserrat_12, 0);
         lv_obj_align(header_right, LV_ALIGN_TOP_RIGHT, -8, 8);
 
+        create_battery_label(parent, 2);
+
         lv_obj_t *title = lv_label_create(parent);
         lv_label_set_text(title, "Uptime");
         lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT_DIM), 0);
@@ -369,7 +459,7 @@ namespace
         lv_obj_clear_flag(cpu_card, LV_OBJ_FLAG_SCROLLABLE);
 
         lv_obj_t *cpu_label = lv_label_create(cpu_card);
-        lv_label_set_text(cpu_label, LV_SYMBOL_SETTINGS " Cpu load");
+        lv_label_set_text(cpu_label, LV_SYMBOL_SETTINGS " CPU Load");
         lv_obj_set_style_text_color(cpu_label, lv_color_hex(COLOR_TEXT_DIM), 0);
         lv_obj_set_style_text_font(cpu_label, &lv_font_montserrat_12, 0);
         lv_obj_align(cpu_label, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -395,8 +485,8 @@ namespace
         lv_obj_align(storage_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
         g_storage_value = lv_label_create(storage_card);
-        lv_label_set_text(g_storage_value, "0%");
-        lv_obj_set_style_text_font(g_storage_value, &lv_font_montserrat_22, 0);
+        lv_label_set_text(g_storage_value, "--/-- MB");
+        lv_obj_set_style_text_font(g_storage_value, &lv_font_montserrat_18, 0);
         lv_obj_set_style_text_color(g_storage_value, lv_color_hex(0xFFFFFF), 0);
         lv_obj_align(g_storage_value, LV_ALIGN_BOTTOM_LEFT, 0, 2);
     }
@@ -431,7 +521,7 @@ namespace
             lv_label_set_text_fmt(g_gas_value, "Gas res.\n%s", text);
 
             lv_label_set_text_fmt(g_acc_value, "Accuracy\nLvl %u", data.iaq_accuracy);
-            lv_label_set_text_fmt(g_iaq_value, "IAQ\n%u", static_cast<uint32_t>(data.iaq));
+            lv_label_set_text_fmt(g_iaq_number, "%u", static_cast<uint32_t>(data.iaq));
 
             int32_t iaq_value = static_cast<int32_t>(data.iaq);
             iaq_value = clamp_i32(iaq_value, 0, 500);
@@ -454,16 +544,41 @@ namespace
         lv_label_set_text_fmt(g_footer_uptime, "Uptime: %s", uptime);
         lv_label_set_text(g_uptime_big, uptime);
 
-        const uint32_t heap_free = ESP.getFreeHeap();
-        const uint32_t heap_total = ESP.getHeapSize();
-        const uint8_t cpu_est = static_cast<uint8_t>((now_ms / 200UL) % 35UL + 10UL);
-        uint8_t heap_used_pct = 0;
-        if (heap_total > 0)
+        if ((g_last_sys_info_refresh_ms == 0U) || (now_ms - g_last_sys_info_refresh_ms >= SYS_INFO_REFRESH_MS))
         {
-            heap_used_pct = static_cast<uint8_t>((100UL * (heap_total - heap_free)) / heap_total);
+            g_last_sys_info_refresh_ms = now_ms;
+
+            const uint32_t heap_free = ESP.getFreeHeap();
+            const uint32_t heap_total = ESP.getHeapSize();
+            uint8_t cpu_est = 0;
+            if (heap_total > 0U)
+            {
+                const uint32_t heap_used_pct = (100UL * (heap_total - heap_free)) / heap_total;
+                cpu_est = static_cast<uint8_t>(clamp_i32(static_cast<int32_t>(heap_used_pct), 0, 100));
+            }
+
+            const uint32_t storage_total = ESP.getFlashChipSize();
+            const uint32_t storage_free = ESP.getFreeSketchSpace();
+            const uint32_t bytes_per_mb = 1024UL * 1024UL;
+
+            uint32_t storage_free_tenths = 0;
+            uint32_t storage_total_tenths = 0;
+            if (storage_total > 0U)
+            {
+                storage_free_tenths = static_cast<uint32_t>((static_cast<uint64_t>(storage_free) * 10ULL) / bytes_per_mb);
+                storage_total_tenths = static_cast<uint32_t>((static_cast<uint64_t>(storage_total) * 10ULL) / bytes_per_mb);
+            }
+
+            lv_label_set_text_fmt(g_cpu_value, "%u %%", cpu_est);
+            lv_label_set_text_fmt(g_storage_value,
+                                  "%lu.%lu/%lu.%lu MB",
+                                  static_cast<unsigned long>(storage_free_tenths / 10U),
+                                  static_cast<unsigned long>(storage_free_tenths % 10U),
+                                  static_cast<unsigned long>(storage_total_tenths / 10U),
+                                  static_cast<unsigned long>(storage_total_tenths % 10U));
+
+            update_battery_labels();
         }
-        lv_label_set_text_fmt(g_cpu_value, "%u %%", cpu_est);
-        lv_label_set_text_fmt(g_storage_value, "%u %%", heap_used_pct);
     }
 
 } // namespace
@@ -474,6 +589,7 @@ bool ui_init_display()
     digitalWrite(PIN_LCD_POWER, HIGH);
     pinMode(PIN_LCD_BL, OUTPUT);
     digitalWrite(PIN_LCD_BL, HIGH);
+    pinMode(PIN_BAT_VOLT, INPUT);
 
     lv_init();
 
