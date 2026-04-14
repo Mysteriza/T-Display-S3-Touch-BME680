@@ -4,6 +4,7 @@
 #include <Wire.h>
 #include <bsec2.h>
 #include <math.h>
+#include <float.h>
 
 #include "config.h"
 
@@ -24,11 +25,13 @@ namespace
     bool g_bme_on_alt_bus = false;
 
     uint32_t g_last_publish_ms = 0;
+    uint32_t g_last_sample_ms = 0;
     uint32_t g_last_state_save_ms = 0;
     uint32_t g_last_debug_ms = 0;
 
-    constexpr uint32_t I2C_DEBUG_INTERVAL_MS = 5000UL;
+    constexpr uint32_t I2C_DEBUG_INTERVAL_MS = 10000UL;
     constexpr uint32_t SENSOR_INIT_RETRY_MS = 3000UL;
+    constexpr uint32_t SENSOR_STALE_REINIT_MS = SENSOR_REFRESH + 5000UL;
     constexpr uint8_t BME68X_CHIP_ID_REG = 0xD0;
     constexpr uint8_t BME68X_CHIP_ID_VALUE = 0x61;
 
@@ -53,6 +56,27 @@ namespace
             return NAN;
         }
         return 44330.0f * (1.0f - powf(pressure_hpa / 1013.25f, 0.1903f));
+    }
+
+    const char *rate_name(float rate)
+    {
+        if (fabsf(rate - BSEC_SAMPLE_RATE_CONT) < FLT_EPSILON)
+        {
+            return "CONT";
+        }
+        if (fabsf(rate - BSEC_SAMPLE_RATE_LP) < 0.0002f)
+        {
+            return "LP";
+        }
+        if (fabsf(rate - BSEC_SAMPLE_RATE_SCAN) < 0.0002f)
+        {
+            return "SCAN";
+        }
+        if (fabsf(rate - BSEC_SAMPLE_RATE_ULP) < 0.0002f)
+        {
+            return "ULP";
+        }
+        return "CUSTOM";
     }
 
     bool i2c_ping(TwoWire &bus, uint8_t address)
@@ -275,6 +299,10 @@ namespace
             return;
         }
 
+        const bool has_core_values = isfinite(g_live.temperature_c) &&
+                                     isfinite(g_live.humidity_pct) &&
+                                     isfinite(g_live.pressure_hpa);
+
         g_sensor_data.temperature_c = g_live.temperature_c;
         g_sensor_data.humidity_pct = g_live.humidity_pct;
         g_sensor_data.pressure_hpa = g_live.pressure_hpa;
@@ -282,8 +310,13 @@ namespace
         g_sensor_data.iaq = g_live.iaq;
         g_sensor_data.iaq_accuracy = g_live.iaq_accuracy;
         g_sensor_data.altitude_m = calc_altitude(g_live.pressure_hpa);
-        g_sensor_data.valid = g_live.has_new_sample;
+        g_sensor_data.valid = has_core_values;
         g_sensor_data.last_update_ms = now_ms;
+
+        if (g_live.has_new_sample)
+        {
+            g_last_sample_ms = now_ms;
+        }
 
         g_live.has_new_sample = false;
         xSemaphoreGive(g_sensor_mutex);
@@ -384,6 +417,7 @@ bool sensors_init()
 
     const RateCandidate rate_candidates[] = {
         {BSEC_SAMPLE_RATE_LP, "LP"},
+        {BSEC_SAMPLE_RATE_SCAN, "SCAN"},
         {BSEC_SAMPLE_RATE_CONT, "CONT"},
         {BSEC_SAMPLE_RATE_ULP, "ULP"},
     };
@@ -436,10 +470,12 @@ bool sensors_init()
         const uint32_t now_ms = millis();
         publish_snapshot(now_ms);
         g_last_publish_ms = now_ms;
+        g_last_sample_ms = now_ms;
     }
     else
     {
         g_last_publish_ms = 0;
+        g_last_sample_ms = 0;
     }
     g_last_state_save_ms = millis();
     return true;
@@ -475,6 +511,27 @@ void sensors_debug_tick()
         return;
     }
     g_last_debug_ms = now_ms;
+
+    const SensorData snapshot = sensors_get_data();
+    const uint32_t sample_age_ms = snapshot.valid ? (now_ms - snapshot.last_update_ms) : UINT32_MAX;
+    const bool sample_stale = snapshot.valid && (sample_age_ms > SENSOR_STALE_REINIT_MS);
+
+    if (g_sensor_healthy && snapshot.valid && !sample_stale)
+    {
+        Serial.printf("[SENSOR] OK bus=%s addr=0x%02X mode=%s age=%lu ms | T=%.2f C H=%.2f %% P=%.2f hPa Alt=%.1f m Gas=%.2f kOhm IAQ=%.1f acc=%u\n",
+                      g_bme_on_alt_bus ? "ALT(43/44)" : "MAIN(18/17)",
+                      g_bme_addr,
+                      rate_name(g_active_bsec_rate),
+                      static_cast<unsigned long>(sample_age_ms),
+                      snapshot.temperature_c,
+                      snapshot.humidity_pct,
+                      snapshot.pressure_hpa,
+                      snapshot.altitude_m,
+                      snapshot.gas_resistance_kohm,
+                      snapshot.iaq,
+                      snapshot.iaq_accuracy);
+        return;
+    }
 
     const bool touch_15 = i2c_ping(Wire, 0x15);
     const bool touch_1a = i2c_ping(Wire, 0x1A);
@@ -550,6 +607,17 @@ void sensors_debug_tick()
                   g_bme_addr,
                   g_sensor_healthy ? "OK" : "FAIL");
 
+    if (snapshot.valid)
+    {
+        Serial.printf("[BME680] mode=%s sample_age=%lu ms\n",
+                      rate_name(g_active_bsec_rate),
+                      static_cast<unsigned long>(sample_age_ms));
+    }
+    else
+    {
+        Serial.printf("[BME680] mode=%s sample_age=n/a\n", rate_name(g_active_bsec_rate));
+    }
+
     const bool any_bme = bme_main_76 || bme_main_77 || bme_alt_76 || bme_alt_77;
     const bool any_bme68x = chip_main_76_ok || chip_main_77_ok || chip_alt_76_ok || chip_alt_77_ok;
     if (!any_bme)
@@ -568,12 +636,10 @@ void sensors_debug_tick()
                       detected_addr);
     }
 
-    const SensorData snapshot = sensors_get_data();
     if (snapshot.valid)
     {
-        const uint32_t age_ms = now_ms - snapshot.last_update_ms;
         Serial.printf("[BME680] data valid age=%lu ms | T=%.2f C H=%.2f %% P=%.2f hPa Gas=%.2f kOhm IAQ=%.1f acc=%u\n",
-                      static_cast<unsigned long>(age_ms),
+                      static_cast<unsigned long>(sample_age_ms),
                       snapshot.temperature_c,
                       snapshot.humidity_pct,
                       snapshot.pressure_hpa,
@@ -610,14 +676,34 @@ void sensorTask(void * /*parameter*/)
 
         if (g_sensor_healthy)
         {
-            g_bsec.run();
+            const bool run_ok = g_bsec.run();
             const uint32_t now_ms = millis();
+
+            if (!run_ok)
+            {
+                Serial.printf("[BME680] run fail: bsec_status=%d sensor_status=%d -> reinit scheduled\n",
+                              static_cast<int>(g_bsec.status),
+                              static_cast<int>(g_bsec.sensor.status));
+                g_sensor_healthy = false;
+                vTaskDelay(wait_ticks);
+                continue;
+            }
 
             // Publish as soon as BSEC provides a fresh sample (including first sample).
             if (g_live.has_new_sample)
             {
                 publish_snapshot(now_ms);
                 g_last_publish_ms = now_ms;
+            }
+
+            if ((g_last_sample_ms != 0U) && (now_ms - g_last_sample_ms > SENSOR_STALE_REINIT_MS))
+            {
+                Serial.printf("[BME680] stale sample (%lu ms > %lu ms), reinit scheduled\n",
+                              static_cast<unsigned long>(now_ms - g_last_sample_ms),
+                              static_cast<unsigned long>(SENSOR_STALE_REINIT_MS));
+                g_sensor_healthy = false;
+                vTaskDelay(wait_ticks);
+                continue;
             }
 
             if (now_ms - g_last_state_save_ms >= BSEC_STATE_SAVE_MS)

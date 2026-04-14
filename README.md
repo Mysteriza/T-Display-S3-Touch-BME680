@@ -166,7 +166,13 @@ platformio run -e lilygo-t-display-s3 -t upload --upload-port COMx
 platformio device monitor -b 115200
 ```
 
-Firmware now prints I2C/BME680 diagnostics every 5 seconds. Look for these lines:
+Firmware now prints diagnostics every 10 seconds.
+
+Healthy mode (concise):
+
+- `[SENSOR] OK ...` shows bus/address, active BSEC mode, sample age, and latest values.
+
+Troubleshooting mode (detailed):
 
 - `[I2C] main(...)` full scan on shared bus (GPIO18/GPIO17, touch bus)
 - `[I2C] alt(...)` full scan on preferred sensor bus (GPIO43/GPIO44)
@@ -187,13 +193,14 @@ Firmware will auto-probe BME680 on both buses and pick the first valid one:
 - Any touch activity or wake button event resets the timeout.
 - If BME680 init fails during early boot timing, firmware retries sensor init automatically in background.
 - Firmware now publishes the first sensor snapshot as soon as the first valid BSEC sample is available (no 30-second initial wait).
+- If sensor samples become stale for too long, firmware auto-reinitializes sensor/BSEC to recover updates.
 
 ## Configuration
 
 Edit include/config.h for common adjustments:
 
 - DISPLAY_TIMEOUT (default 15000 ms)
-- SENSOR_REFRESH (default 30000 ms)
+- SENSOR_REFRESH (default 15000 ms)
 - I2C pins and addresses
 - UI color constants
 
@@ -208,8 +215,8 @@ Edit include/config.h for common adjustments:
   - SDO to GND = 0x76, SDO to 3V3 = 0x77.
   - Firmware auto-detects both 0x76 and 0x77; ensure SDO strap is stable and not floating.
   - BME680/BME688 must report CHIP_ID `0x61`. If serial says device exists at 0x76/0x77 but CHIP_ID is not `0x61`, the connected module is likely not a BME68x sensor.
-  - If serial shows `bsec_status=14` during init, firmware now auto-falls back across BSEC sample-rate modes (LP -> ULP -> CONT) to find a compatible subscription.
-  - Open Serial Monitor and read `[I2C]` / `[BME680]` debug output every 5 seconds.
+  - If serial shows `bsec_status=14` during init, firmware now auto-falls back across BSEC sample-rate modes (LP -> SCAN -> CONT -> ULP) to find a compatible subscription.
+  - Open Serial Monitor and read `[SENSOR]` / `[I2C]` / `[BME680]` debug output every 10 seconds.
   - If BME appears only on `alt(...)` scan, keep wiring on GPIO43/44.
   - If BME appears only on `main(...)` scan, move wiring to GPIO18/17.
 - Build command not found:
@@ -254,3 +261,7 @@ Managed in platformio.ini:
 - Updated Page 01 numeric card typography (smaller value font) to avoid overlap with card titles.
 - Updated Temp/Humidity/Pressure formatting to 2 decimal places.
 - Added IAQ status/risk mapping with dynamic labels and IAQ color state on Page 02.
+- Refined IAQ center typography alignment on Page 02 using fixed-width centered labels for symmetric title/value positioning.
+- Changed default sensor refresh interval from 30 seconds to 15 seconds.
+- Improved sensor reliability with stale-sample watchdog and auto-reinit when data stops updating.
+- Refined serial diagnostics: concise healthy summary plus detailed troubleshooting output, with 10-second cadence.

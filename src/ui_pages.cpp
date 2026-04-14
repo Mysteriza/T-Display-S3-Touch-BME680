@@ -519,14 +519,18 @@ namespace
 
         g_iaq_value = lv_label_create(parent);
         lv_label_set_text(g_iaq_value, "IAQ");
-        lv_obj_set_style_text_font(g_iaq_value, &lv_font_montserrat_18, 0);
+        lv_obj_set_style_text_font(g_iaq_value, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(g_iaq_value, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_align_to(g_iaq_value, g_iaq_arc, LV_ALIGN_CENTER, 0, -14);
+        lv_obj_set_width(g_iaq_value, 64);
+        lv_obj_set_style_text_align(g_iaq_value, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align_to(g_iaq_value, g_iaq_arc, LV_ALIGN_CENTER, 0, -18);
 
         g_iaq_number = lv_label_create(parent);
         lv_label_set_text(g_iaq_number, "0");
         lv_obj_set_style_text_font(g_iaq_number, &lv_font_montserrat_32, 0);
         lv_obj_set_style_text_color(g_iaq_number, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_width(g_iaq_number, 96);
+        lv_obj_set_style_text_align(g_iaq_number, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align_to(g_iaq_number, g_iaq_arc, LV_ALIGN_CENTER, 0, 18);
 
         g_iaq_status = lv_label_create(parent);
