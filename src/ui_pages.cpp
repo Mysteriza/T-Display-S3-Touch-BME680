@@ -91,6 +91,7 @@ namespace
     lv_obj_t *g_cpu_value = nullptr;
     lv_obj_t *g_storage_value = nullptr;
     lv_obj_t *g_battery_labels[3] = {nullptr, nullptr, nullptr};
+    lv_obj_t *g_env_headers[3] = {nullptr, nullptr, nullptr};
 
     uint32_t g_last_ui_refresh_ms = 0;
     uint32_t g_last_cpu_refresh_ms = 0;
@@ -449,11 +450,11 @@ namespace
 
     void build_page_one(lv_obj_t *parent)
     {
-        lv_obj_t *header_left = lv_label_create(parent);
-        lv_label_set_text(header_left, LV_SYMBOL_DIRECTORY " Env_monitor");
-        lv_obj_set_style_text_color(header_left, lv_color_hex(COLOR_VALUE), 0);
-        lv_obj_set_style_text_font(header_left, &lv_font_montserrat_14, 0);
-        lv_obj_align(header_left, LV_ALIGN_TOP_LEFT, 8, 7);
+        g_env_headers[0] = lv_label_create(parent);
+        lv_label_set_text(g_env_headers[0], LV_SYMBOL_DIRECTORY " Env_monitor");
+        lv_obj_set_style_text_color(g_env_headers[0], lv_color_hex(COLOR_VALUE), 0);
+        lv_obj_set_style_text_font(g_env_headers[0], &lv_font_montserrat_14, 0);
+        lv_obj_align(g_env_headers[0], LV_ALIGN_TOP_LEFT, 8, 7);
 
         lv_obj_t *header_right = lv_label_create(parent);
         lv_label_set_text(header_right, "PAGE 01 / ENV");
@@ -477,11 +478,11 @@ namespace
 
     void build_page_two(lv_obj_t *parent)
     {
-        lv_obj_t *header = lv_label_create(parent);
-        lv_label_set_text(header, LV_SYMBOL_DIRECTORY " Env_monitor");
-        lv_obj_set_style_text_color(header, lv_color_hex(COLOR_VALUE), 0);
-        lv_obj_set_style_text_font(header, &lv_font_montserrat_14, 0);
-        lv_obj_align(header, LV_ALIGN_TOP_LEFT, 8, 7);
+        g_env_headers[1] = lv_label_create(parent);
+        lv_label_set_text(g_env_headers[1], LV_SYMBOL_DIRECTORY " Env_monitor");
+        lv_obj_set_style_text_color(g_env_headers[1], lv_color_hex(COLOR_VALUE), 0);
+        lv_obj_set_style_text_font(g_env_headers[1], &lv_font_montserrat_14, 0);
+        lv_obj_align(g_env_headers[1], LV_ALIGN_TOP_LEFT, 8, 7);
 
         lv_obj_t *header_right = lv_label_create(parent);
         lv_label_set_text(header_right, "PAGE 02 / AQI");
@@ -558,11 +559,11 @@ namespace
 
     void build_page_three(lv_obj_t *parent)
     {
-        lv_obj_t *header = lv_label_create(parent);
-        lv_label_set_text(header, LV_SYMBOL_DIRECTORY " Env_monitor");
-        lv_obj_set_style_text_color(header, lv_color_hex(COLOR_VALUE), 0);
-        lv_obj_set_style_text_font(header, &lv_font_montserrat_14, 0);
-        lv_obj_align(header, LV_ALIGN_TOP_LEFT, 8, 7);
+        g_env_headers[2] = lv_label_create(parent);
+        lv_label_set_text(g_env_headers[2], LV_SYMBOL_DIRECTORY " Env_monitor");
+        lv_obj_set_style_text_color(g_env_headers[2], lv_color_hex(COLOR_VALUE), 0);
+        lv_obj_set_style_text_font(g_env_headers[2], &lv_font_montserrat_14, 0);
+        lv_obj_align(g_env_headers[2], LV_ALIGN_TOP_LEFT, 8, 7);
 
         lv_obj_t *header_right = lv_label_create(parent);
         lv_label_set_text(header_right, "PAGE 03 / Uptime");
@@ -630,6 +631,19 @@ namespace
 
         const SensorData data = sensors_get_data();
         char text[64] = {0};
+
+        const bool data_fresh = data.valid &&
+                                (now_ms >= data.last_update_ms) &&
+                                ((now_ms - data.last_update_ms) < SENSOR_REFRESH);
+        const bool sensor_active = sensors_is_healthy() && data_fresh;
+        const lv_color_t env_color = sensor_active ? lv_color_hex(COLOR_VALUE) : lv_color_hex(COLOR_FAIL);
+        for (uint8_t i = 0; i < 3; ++i)
+        {
+            if (g_env_headers[i] != nullptr)
+            {
+                lv_obj_set_style_text_color(g_env_headers[i], env_color, 0);
+            }
+        }
 
         if (data.valid)
         {

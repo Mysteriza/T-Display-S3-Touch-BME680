@@ -1,188 +1,121 @@
 # T-Display-S3 Touch BME680 Monitor
 
-Offline environmental monitor firmware for LilyGO T-Display-S3.
+Offline environmental monitor firmware for LilyGO T-Display-S3 with BME680/BME688 and Bosch BSEC2.
 
-The project displays live environmental data on a 320x170 landscape UI built with LVGL, uses BME680 + Bosch BSEC2 for IAQ processing, supports swipe navigation via capacitive touch, and includes smart power behavior (screen timeout + wake input).
+This document uses English only and documents Qwiic as the primary user wiring method.
 
 ## Design Prototype
 
 ![UI Design](UI%20Design%20Prototype.png)
 
-## Main Functions
+## Features
 
-- Runs fully offline (no Wi-Fi required).
-- Shows a boot self-check screen for LCD, touch controller, and sensor.
-- Reads and processes:
-  - Temperature
-  - Humidity
-  - Pressure
-  - Altitude (derived)
-  - Gas resistance
-  - IAQ + IAQ accuracy (from BSEC2)
-- Provides 3 touch-navigable pages with left/right swipe.
-- Turns display backlight off after inactivity and wakes on interaction.
-- Saves BSEC state to NVS periodically (every 24 hours) for better long-term IAQ behavior.
+- Fully offline operation (no Wi-Fi required).
+- Boot self-check for LCD, touch controller, and sensor.
+- LVGL UI (320x170 landscape) with left/right swipe navigation.
+- Live values for temperature, humidity, pressure, derived altitude, gas resistance, IAQ, and IAQ accuracy.
+- Smart backlight timeout (default 15 seconds), wake on touch or wake button.
+- BSEC state persistence to NVS every 24 hours.
+- Runtime calibration commands (`set slp`, `set alt`) with immediate altitude update.
+- Quiet serial monitor by default (detailed debug is opt-in).
+- Header connectivity indicator:
+  - Env_monitor text is cyan when sensor is healthy and data is fresh.
+  - Env_monitor text turns red when sensor is disconnected/not healthy or no fresh update arrives within the refresh interval.
 
-## Hardware and Tools Required
+## Required Hardware
 
-- LilyGO T-Display-S3 board
-- BME680 module (I2C)
-- USB-C cable
-- PC with:
-  - Visual Studio Code
-  - PlatformIO IDE extension
+- LilyGO T-Display-S3 (touch variant).
+- BME680/BME688 module with Qwiic/STEMMA QT connector.
+- 4-pin Qwiic JST-SH cable.
+- USB-C cable.
+- PC with Visual Studio Code and PlatformIO extension.
 
-Optional:
+## Sensor Wiring (Qwiic)
 
-- External wake button connected to GPIO14 (if not using onboard button mapping)
+Use a direct Qwiic cable between the board and the sensor.
 
-## Firmware Stack
+### 1. Connect Qwiic Cable
 
-- MCU: ESP32-S3 (Arduino framework)
-- Display: ST7789, 8-bit parallel, landscape right
-- UI: LVGL 8.3
-- Sensor processing: Bosch BSEC2 + BME68x library
-- Touch: SensorLib TouchDrvCSTXXX (auto-detect touch address)
-- Build system: PlatformIO
+- Connect T-Display-S3 Qwiic port to BME680 Qwiic/STEMMA QT port.
+- No manual SDA/SCL jumper wiring is needed for normal usage.
 
-## Wiring
+### 2. Qwiic Signal Mapping
 
-### 1) Onboard Peripherals (already wired on T-Display-S3)
-
-These are handled by firmware and board hardware:
-
-- LCD backlight: GPIO38
-- LCD power: GPIO15
-- Touch reset: GPIO21
-- Touch interrupt: GPIO16
-- Wake button input: GPIO14
-
-### 2) External BME680 Wiring (I2C)
-
-Connect BME680 to T-Display-S3 as follows:
-
-| BME680 Pin | T-Display-S3 Pin |
-| ---------- | ---------------- |
-| VCC        | 3V3              |
-| GND        | GND              |
-| SDA        | GPIO43           |
-| SCL        | GPIO44           |
-| CS / CSB   | 3V3              |
-| SDO / ADDR | GND (0x76)       |
-
-Notes:
-
-- This project uses I2C mode, so CS/CSB must be tied HIGH (3V3).
-- SDO/ADDR selects I2C address:
-  - SDO to GND -> 0x76 (default in this project)
-  - SDO to 3V3 -> 0x77
-- Firmware auto-detects BME680 at 0x76 or 0x77. You can keep default config for most setups.
-- If your sensor board has a QWIIC/STEMMA-QT connector, it is still the same I2C bus (SDA/SCL). You may use either QWIIC cable or direct GPIO wiring.
-- Firmware will try sensor bus GPIO43/GPIO44 first, then fallback to GPIO18/GPIO17.
-
-### 3) Alternative: BME680 via QWIIC Port
-
-If both boards provide QWIIC/STEMMA-QT sockets, use a 4-pin JST-SH cable directly:
-
-- T-Display-S3 QWIIC <-> BME680 QWIIC/STEMMA-QT
-- No separate SDA/SCL jumper wires are needed.
-
-QWIIC signal map (standard 4-wire I2C):
-
-| QWIIC Signal | Function  |
+| Qwiic Signal | Function  |
 | ------------ | --------- |
-| GND          | Ground    |
 | 3V3          | Power     |
+| GND          | Ground    |
 | SDA          | I2C Data  |
 | SCL          | I2C Clock |
 
-Important notes for QWIIC usage:
+Firmware sensor-bus preference:
 
-- QWIIC is only a physical connector; protocol remains standard I2C.
-- Firmware still uses the same auto-probe logic: GPIO43/44 preferred, GPIO18/17 fallback.
-- For modules exposing CS/SDO pins or jumpers:
-  - CS/CSB must be HIGH (3V3) for I2C mode.
-  - SDO selects address: 0x76 (GND) or 0x77 (3V3). Firmware auto-detects both.
+- Preferred bus: ALT bus (SDA GPIO43, SCL GPIO44).
 
-Quick verification after switching to QWIIC:
+Internal fallback to MAIN bus (GPIO18/GPIO17) remains in firmware for compatibility, but the documented user wiring path is Qwiic.
 
-1. Upload firmware as usual.
-2. Open serial monitor at 115200.
-3. Confirm BME680 appears in `[I2C] alt(...)` or `[I2C] main(...)` scan at 0x76/0x77.
-4. Confirm boot self-check reports sensor `[OK]`.
+### 3. Sensor I2C Address Notes
 
-Validated QWIIC wiring that works in this project:
+Valid BME68x addresses:
 
-- VCC -> 3V3
-- GND -> GND
-- SCL -> QWIIC SCL / GPIO44
-- SDA -> QWIIC SDA / GPIO43
-- CS/CSB -> 3V3 (force I2C mode)
+- 0x76
+- 0x77
 
-Observed runtime result with this wiring:
+Firmware auto-detects both addresses at initialization.
 
-- Sensor detected on ALT bus (GPIO43/GPIO44)
-- Address detected at 0x77
-- CHIP_ID detected as 0x61 (valid BME68x)
+For modules exposing CS/SDO jumpers:
 
-## Project Structure
+- CS/CSB must be HIGH (3V3) for I2C mode.
+- SDO usually selects address (GND -> 0x76, 3V3 -> 0x77).
 
-- include/config.h: Pin map, timing values, color constants
-- include/sensors.h + src/sensors.cpp: BSEC2 pipeline, sensor snapshot, NVS state handling
-- include/ui_pages.h + src/ui_pages.cpp: LVGL display/touch init and page rendering
-- include/power_mgmt.h + src/power_mgmt.cpp: Backlight timeout and wake logic
-- src/main.cpp: Boot sequence and FreeRTOS task startup
-- platformio.ini: Board config, build flags, dependencies
+### 4. Qwiic Verification Steps
 
-## Build
+After firmware upload:
 
-From project root:
+1. Open serial monitor at 115200.
+2. Run `status`.
+3. Confirm sensor status is `OK` and bus/address are reported.
+4. Run `i2c scan` if address validation is needed.
+
+If `status` is not valid immediately after boot, wait until the first BSEC sample is produced.
+
+## Build and Upload
+
+Run commands from project root.
+
+### Build
 
 ```bash
 platformio run -e lilygo-t-display-s3
 ```
 
-If PlatformIO is not in PATH on Windows:
-
-```bash
-C:\Users\<your-user>\.platformio\penv\Scripts\platformio.exe run -e lilygo-t-display-s3
-```
-
-## Upload
+### Upload
 
 ```bash
 platformio run -e lilygo-t-display-s3 -t upload
 ```
 
-To use a specific serial port:
+### Upload to specific port
 
 ```bash
 platformio run -e lilygo-t-display-s3 -t upload --upload-port COMx
 ```
 
-## Serial Monitor
+## Serial Monitor and Commands
+
+### Open serial monitor
 
 ```bash
 platformio device monitor -b 115200
 ```
 
-Firmware now prints diagnostics every 10 seconds.
+### Logging modes
 
-By default, automatic diagnostics are disabled to keep Serial Monitor clean.
-Use `debug detail on` to enable periodic detailed logs, and `debug detail off` to disable them again.
+- Default: quiet (no periodic detailed debug spam).
+- Enable detailed debug: `debug detail on`
+- Disable detailed debug: `debug detail off`
 
-Healthy mode (concise):
-
-- `[SENSOR] OK ...` shows bus/address, active BSEC mode, sample age, and latest values.
-
-Troubleshooting mode (detailed):
-
-- `[I2C] main(...)` full scan on shared bus (GPIO18/GPIO17, touch bus)
-- `[I2C] alt(...)` full scan on preferred sensor bus (GPIO43/GPIO44)
-- `[I2C] ...` quick probe of touch and BME680 addresses on both buses
-- `[BME680] ...` sensor detection status and latest data snapshot
-
-Interactive serial commands (type in serial monitor):
+### Command list
 
 - `help`
 - `status`
@@ -195,55 +128,61 @@ Interactive serial commands (type in serial monitor):
 - `debug detail on`
 - `debug detail off`
 
-Notes:
+Command behavior notes:
 
-- Commands are executed on Enter, and also auto-executed after a short idle timeout if your terminal does not send CR/LF.
-- `set slp` and `set alt` now refresh displayed altitude immediately.
-
-Firmware will auto-probe BME680 on both buses and pick the first valid one:
-
-- Preferred bus: GPIO43 (SDA), GPIO44 (SCL)
-- Fallback bus: GPIO18 (SDA), GPIO17 (SCL)
+- Commands run on Enter.
+- If a terminal does not send CR/LF, commands auto-run after a short idle timeout.
+- `set slp` and `set alt` immediately refresh displayed altitude from the latest pressure snapshot.
 
 ## Runtime Behavior
 
-- Boot performs hardware checks and shows OK or FAIL states.
-- UI starts on Page 1.
-- Swipe left or right to change page.
-- Display timeout default is 15 seconds of inactivity.
-- Any touch activity or wake button event resets the timeout.
-- If BME680 init fails during early boot timing, firmware retries sensor init automatically in background.
-- Firmware now publishes the first sensor snapshot as soon as the first valid BSEC sample is available (no 30-second initial wait).
-- If sensor samples become stale for too long, firmware auto-reinitializes sensor/BSEC to recover updates.
+- Boot self-check displays LCD/touch/sensor status as OK/FAIL.
+- UI starts on page 1 and supports three swipe pages.
+- Backlight timeout default: 15000 ms.
+- Touch activity or wake button resets inactivity timer.
+- Sensor task runs separately (FreeRTOS) and retries initialization on failure.
+- If sensor data becomes stale for too long, firmware schedules automatic sensor re-initialization.
 
-## Configuration
+## Main Configuration
 
-Edit include/config.h for common adjustments:
+Common settings in include/config.h:
 
-- DISPLAY_TIMEOUT (default 15000 ms)
-- SENSOR_REFRESH (default 15000 ms)
-- I2C pins and addresses
-- UI color constants
+- `DISPLAY_TIMEOUT` (default 15000 ms)
+- `SENSOR_REFRESH` (default 15000 ms)
+- `PIN_I2C_ALT_SDA` (default 43)
+- `PIN_I2C_ALT_SCL` (default 44)
+- `PIN_I2C_SDA` (default 18)
+- `PIN_I2C_SCL` (default 17)
 
-## Troubleshooting
+Sea-level pressure calibration is stored in NVS namespace `sensorcfg` with key `slp_hpa`.
 
-- Touch not responding:
-  - Confirm board is T-Display-S3 touch variant.
-  - Firmware probes touch at 0x15 and 0x1A automatically.
-- Sensor FAIL on boot:
-  - Recheck SDA/SCL wiring and power.
-  - For I2C mode modules with CS/SDO pins: CS must be tied to 3V3.
-  - SDO to GND = 0x76, SDO to 3V3 = 0x77.
-  - Firmware auto-detects both 0x76 and 0x77; ensure SDO strap is stable and not floating.
-  - BME680/BME688 must report CHIP_ID `0x61`. If serial says device exists at 0x76/0x77 but CHIP_ID is not `0x61`, the connected module is likely not a BME68x sensor.
-  - If serial shows `bsec_status=14` during init, firmware now auto-falls back across BSEC sample-rate modes (LP -> SCAN -> CONT -> ULP) to find a compatible subscription.
-  - Open Serial Monitor and read `[SENSOR]` / `[I2C]` / `[BME680]` debug output every 10 seconds.
-  - If BME appears only on `alt(...)` scan, keep wiring on GPIO43/44.
-  - If BME appears only on `main(...)` scan, move wiring to GPIO18/17.
-  - Use command `sensor reinit` to force re-detection without reboot.
-  - Use `set slp` / `set alt` to calibrate altitude computation to local conditions.
-- Build command not found:
-  - Use full PlatformIO executable path from your user profile.
+## Project Structure
+
+- include/config.h: pins, timing, color constants.
+- include/sensors.h + src/sensors.cpp: BSEC2 pipeline, sensor snapshot, serial commands, persistent state/config.
+- include/ui_pages.h + src/ui_pages.cpp: LVGL display/touch initialization and page rendering.
+- include/power_mgmt.h + src/power_mgmt.cpp: backlight timeout and wake logic.
+- src/main.cpp: boot flow, self-check, task startup.
+- platformio.ini: board/environment/dependency configuration.
+
+## Qwiic Troubleshooting
+
+### Sensor not detected
+
+- Confirm Qwiic cable is fully seated on both sides.
+- Confirm the module is BME680/BME688 (CHIP_ID must be 0x61).
+- Run `i2c scan` and verify 0x76 or 0x77 appears.
+- Run `sensor reinit` to force re-detection without reboot.
+
+### Altitude value looks wrong
+
+- Run `set slp <hPa>` using local sea-level pressure, or
+- Run `set alt <meter>` using known local elevation.
+- Re-check with `status`.
+
+### Serial monitor is too noisy
+
+- Use `debug detail off`.
 
 ## Dependencies
 
@@ -254,41 +193,3 @@ Managed in platformio.ini:
 - Bosch BSEC2 Library
 - Bosch BME68x Library
 - lewisxhe/SensorLib
-
-## Change Log (Current)
-
-- Added modular firmware architecture for display, touch, sensor, and power management.
-- Added robust touch initialization with address probing and coordinate mapping.
-- Added swipe-only page navigation and smart display timeout.
-- Added BSEC2 state persistence to NVS.
-- Added complete PlatformIO dependency and build configuration.
-- Added battery percentage indicator at top-center on all pages using built-in board ADC battery sensing.
-- Updated Page 03 system info cadence: CPU Load refreshes every 2 seconds, while Storage/Battery refresh every 5 seconds.
-- Updated Page 03 storage text to numeric free/total MB format without float printf.
-- Updated gas resistance unit fallback to ASCII `kOhm` for font compatibility on-board.
-- Clarified BME680 I2C wiring for modules with CS/SDO pins (CS to 3V3, SDO for 0x76/0x77 address select).
-- Added periodic serial diagnostics (every 5 seconds) for I2C probe and BME680 detection/data status.
-- Added dual-bus BME680 auto-probe with preferred sensor bus 43/44 and fallback 18/17, plus detailed serial monitor output.
-- Improved top header symmetry by aligning `Env_monitor` vertically with battery indicator and PAGE labels on all pages.
-- Changed default display timeout from 10 seconds to 15 seconds.
-- Lowered and re-centered IAQ gauge placement on Page 02 to keep safe spacing from the battery indicator.
-- Removed duplicate `Uptime` subtitle on Page 03 and kept uptime context in the top-right page header only.
-- Simplified battery label text to icon + percentage only (including USB-powered mode), kept top-center alignment.
-- Fine-tuned `Env_monitor` vertical offset by 1px upward for tighter alignment with battery and PAGE header text.
-- Added explicit QWIIC wiring alternative section (direct cable method, address notes, and verification steps).
-- Improved BME680 robustness with multi-address auto-detect (0x76/0x77) and automatic init retry when early boot probe fails.
-- Added BME68x CHIP_ID (0x61) validation in diagnostics to detect wrong devices responding at 0x76/0x77.
-- Added automatic BSEC subscription fallback across sample-rate modes (LP/ULP/CONT) to handle samplerate mismatch warnings (`bsec_status=14`).
-- Fixed pressure scaling path (removed double conversion), which restores realistic pressure and derived altitude values.
-- Improved first-sample UX by publishing sensor data immediately after first valid BSEC output instead of waiting for periodic interval.
-- Updated Page 01 numeric card typography (smaller value font) to avoid overlap with card titles.
-- Updated Temp/Humidity/Pressure formatting to 2 decimal places.
-- Added IAQ status/risk mapping with dynamic labels and IAQ color state on Page 02.
-- Refined IAQ center typography alignment on Page 02 using fixed-width centered labels for symmetric title/value positioning.
-- Changed default sensor refresh interval from 30 seconds to 15 seconds.
-- Improved sensor reliability with stale-sample watchdog and auto-reinit when data stops updating.
-- Refined serial diagnostics: concise healthy summary plus detailed troubleshooting output, with 10-second cadence.
-- Added interactive serial command interface for live maintenance and calibration (`status`, `set/get slp`, `set alt`, `sensor reinit`, `i2c scan`, debug toggles).
-- Added I2C bus timeout safeguards to reduce risk of long-run bus lockups when sensor disconnects intermittently.
-- Disabled automatic serial debug output by default to keep monitor clean; detailed logs are opt-in via command.
-- Improved serial command parser to accept terminals that do not send newline, and made SLP/altitude calibration effects visible immediately.
