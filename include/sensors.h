@@ -18,4 +18,5 @@ struct SensorData
 bool sensors_init();
 bool sensors_is_healthy();
 SensorData sensors_get_data();
+void sensors_debug_tick();
 void sensorTask(void *parameter);

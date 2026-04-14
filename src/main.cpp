@@ -35,6 +35,7 @@ void setup()
 
 void loop()
 {
+  sensors_debug_tick();
   power_mgmt_loop();
   delay(20);
 }

@@ -11,13 +11,22 @@ namespace
 {
 
     Bsec2 g_bsec;
+    TwoWire g_alt_wire(1);
     Preferences g_nvs;
     SemaphoreHandle_t g_sensor_mutex = nullptr;
     SensorData g_sensor_data{};
     bool g_sensor_healthy = false;
+    bool g_alt_bus_enabled = false;
+
+    TwoWire *g_bme_wire = &Wire;
+    uint8_t g_bme_addr = BME680_I2C_ADDR;
+    bool g_bme_on_alt_bus = false;
 
     uint32_t g_last_publish_ms = 0;
     uint32_t g_last_state_save_ms = 0;
+    uint32_t g_last_debug_ms = 0;
+
+    constexpr uint32_t I2C_DEBUG_INTERVAL_MS = 5000UL;
 
     uint8_t g_bsec_state[BSEC_MAX_STATE_BLOB_SIZE] = {0};
     uint8_t g_bsec_work_buffer[BSEC_MAX_WORKBUFFER_SIZE] = {0};
@@ -40,6 +49,77 @@ namespace
             return NAN;
         }
         return 44330.0f * (1.0f - powf(pressure_hpa / 1013.25f, 0.1903f));
+    }
+
+    bool i2c_ping(TwoWire &bus, uint8_t address)
+    {
+        bus.beginTransmission(address);
+        return bus.endTransmission() == 0;
+    }
+
+    uint8_t detect_bme_addr(TwoWire &bus)
+    {
+        const bool has_76 = i2c_ping(bus, 0x76);
+        const bool has_77 = i2c_ping(bus, 0x77);
+
+        if (has_76 && has_77)
+        {
+            return (BME680_I2C_ADDR == 0x77) ? 0x77 : 0x76;
+        }
+        if (has_76)
+        {
+            return 0x76;
+        }
+        if (has_77)
+        {
+            return 0x77;
+        }
+        return 0;
+    }
+
+    void scan_i2c_bus(TwoWire &bus, char *detected, size_t detected_len, uint8_t *found_count)
+    {
+        if (detected_len == 0)
+        {
+            return;
+        }
+
+        detected[0] = '\0';
+        size_t used = 0;
+        uint8_t count = 0;
+
+        for (uint8_t addr = 0x01; addr < 0x7F; ++addr)
+        {
+            if (!i2c_ping(bus, addr))
+            {
+                continue;
+            }
+
+            const int written = snprintf(detected + used,
+                                         detected_len - used,
+                                         count == 0 ? "0x%02X" : ",0x%02X",
+                                         addr);
+            if (written <= 0)
+            {
+                continue;
+            }
+
+            const size_t remaining = detected_len - used;
+            if (static_cast<size_t>(written) < remaining)
+            {
+                used += static_cast<size_t>(written);
+            }
+            else
+            {
+                used = detected_len - 1;
+            }
+            ++count;
+        }
+
+        if (found_count != nullptr)
+        {
+            *found_count = count;
+        }
     }
 
     void bsec_callback(const bme68xData /*raw_data*/, const bsecOutputs outputs, Bsec2 /*bsec*/)
@@ -148,8 +228,48 @@ bool sensors_init()
 
     seed_default_snapshot();
 
+    g_sensor_healthy = false;
+    g_bme_wire = &Wire;
+    g_bme_addr = BME680_I2C_ADDR;
+    g_bme_on_alt_bus = false;
+    g_alt_bus_enabled = (PIN_I2C_ALT_SDA != PIN_I2C_SDA) || (PIN_I2C_ALT_SCL != PIN_I2C_SCL);
+
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
-    g_sensor_healthy = g_bsec.begin(BME680_I2C_ADDR, Wire);
+    if (g_alt_bus_enabled)
+    {
+        g_alt_wire.begin(PIN_I2C_ALT_SDA, PIN_I2C_ALT_SCL);
+    }
+
+    const uint8_t main_addr = detect_bme_addr(Wire);
+    uint8_t alt_addr = 0;
+    if (main_addr != 0)
+    {
+        g_bme_wire = &Wire;
+        g_bme_addr = main_addr;
+        g_bme_on_alt_bus = false;
+    }
+    else if (g_alt_bus_enabled)
+    {
+        alt_addr = detect_bme_addr(g_alt_wire);
+        if (alt_addr != 0)
+        {
+            g_bme_wire = &g_alt_wire;
+            g_bme_addr = alt_addr;
+            g_bme_on_alt_bus = true;
+        }
+    }
+
+    if ((main_addr == 0) && (alt_addr == 0))
+    {
+        Serial.println("[BME680] init fail: sensor not found on main or alt I2C bus.");
+        return false;
+    }
+
+    Serial.printf("[BME680] init probe selected bus=%s addr=0x%02X\n",
+                  g_bme_on_alt_bus ? "ALT(44/43)" : "MAIN(18/17)",
+                  g_bme_addr);
+
+    g_sensor_healthy = g_bsec.begin(g_bme_addr, *g_bme_wire);
     if (!g_sensor_healthy)
     {
         return false;
@@ -202,6 +322,100 @@ SensorData sensors_get_data()
         xSemaphoreGive(g_sensor_mutex);
     }
     return copy;
+}
+
+void sensors_debug_tick()
+{
+    const uint32_t now_ms = millis();
+    if (now_ms - g_last_debug_ms < I2C_DEBUG_INTERVAL_MS)
+    {
+        return;
+    }
+    g_last_debug_ms = now_ms;
+
+    const bool touch_15 = i2c_ping(Wire, 0x15);
+    const bool touch_1a = i2c_ping(Wire, 0x1A);
+
+    const bool bme_main_76 = i2c_ping(Wire, 0x76);
+    const bool bme_main_77 = i2c_ping(Wire, 0x77);
+    const bool bme_main_cfg = i2c_ping(Wire, BME680_I2C_ADDR);
+
+    bool bme_alt_76 = false;
+    bool bme_alt_77 = false;
+    bool bme_alt_cfg = false;
+    if (g_alt_bus_enabled)
+    {
+        bme_alt_76 = i2c_ping(g_alt_wire, 0x76);
+        bme_alt_77 = i2c_ping(g_alt_wire, 0x77);
+        bme_alt_cfg = i2c_ping(g_alt_wire, BME680_I2C_ADDR);
+    }
+
+    char main_detected[256] = {0};
+    uint8_t main_found_count = 0;
+    scan_i2c_bus(Wire, main_detected, sizeof(main_detected), &main_found_count);
+
+    Serial.printf("[I2C] main(%d/%d) scan count=%u addr=%s\n",
+                  PIN_I2C_SDA,
+                  PIN_I2C_SCL,
+                  main_found_count,
+                  main_found_count > 0 ? main_detected : "none");
+
+    if (g_alt_bus_enabled)
+    {
+        char alt_detected[256] = {0};
+        uint8_t alt_found_count = 0;
+        scan_i2c_bus(g_alt_wire, alt_detected, sizeof(alt_detected), &alt_found_count);
+        Serial.printf("[I2C] alt(%d/%d)  scan count=%u addr=%s\n",
+                      PIN_I2C_ALT_SDA,
+                      PIN_I2C_ALT_SCL,
+                      alt_found_count,
+                      alt_found_count > 0 ? alt_detected : "none");
+    }
+
+    Serial.printf("[I2C] touch(main:0x15:%s 0x1A:%s) bme(main:0x76:%s 0x77:%s cfg=0x%02X:%s) bme(alt:0x76:%s 0x77:%s cfg=0x%02X:%s)\n",
+                  touch_15 ? "OK" : "--",
+                  touch_1a ? "OK" : "--",
+                  bme_main_76 ? "OK" : "--",
+                  bme_main_77 ? "OK" : "--",
+                  BME680_I2C_ADDR,
+                  bme_main_cfg ? "OK" : "--",
+                  bme_alt_76 ? "OK" : "--",
+                  bme_alt_77 ? "OK" : "--",
+                  BME680_I2C_ADDR,
+                  bme_alt_cfg ? "OK" : "--");
+
+    Serial.printf("[BME680] active bus=%s addr=0x%02X init=%s\n",
+                  g_bme_on_alt_bus ? "ALT" : "MAIN",
+                  g_bme_addr,
+                  g_sensor_healthy ? "OK" : "FAIL");
+
+    const bool any_bme = bme_main_76 || bme_main_77 || bme_alt_76 || bme_alt_77;
+    if (!any_bme)
+    {
+        Serial.println("[BME680] Not detected at 0x76/0x77 on both buses. Check VCC/GND/SDA/SCL, CS->3V3 (I2C mode), and SDO address strap.");
+    }
+    else if (!bme_main_cfg && !bme_alt_cfg)
+    {
+        Serial.printf("[BME680] Sensor found but config uses 0x%02X. Update BME680_I2C_ADDR in include/config.h.\n", BME680_I2C_ADDR);
+    }
+
+    const SensorData snapshot = sensors_get_data();
+    if (snapshot.valid)
+    {
+        const uint32_t age_ms = now_ms - snapshot.last_update_ms;
+        Serial.printf("[BME680] data valid age=%lu ms | T=%.2f C H=%.2f %% P=%.2f hPa Gas=%.2f kOhm IAQ=%.1f acc=%u\n",
+                      static_cast<unsigned long>(age_ms),
+                      snapshot.temperature_c,
+                      snapshot.humidity_pct,
+                      snapshot.pressure_hpa,
+                      snapshot.gas_resistance_kohm,
+                      snapshot.iaq,
+                      snapshot.iaq_accuracy);
+    }
+    else
+    {
+        Serial.printf("[BME680] data not ready. sensors_init=%s\n", g_sensor_healthy ? "OK" : "FAIL");
+    }
 }
 
 void sensorTask(void * /*parameter*/)

@@ -34,6 +34,8 @@
 
 #define PIN_I2C_SDA 18
 #define PIN_I2C_SCL 17
+#define PIN_I2C_ALT_SDA 44
+#define PIN_I2C_ALT_SCL 43
 #define BME680_I2C_ADDR 0x76
 
 #define SCREEN_WIDTH 320

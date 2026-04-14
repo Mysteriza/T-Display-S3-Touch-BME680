@@ -63,11 +63,17 @@ Connect BME680 to T-Display-S3 as follows:
 | GND        | GND              |
 | SDA        | GPIO18           |
 | SCL        | GPIO17           |
+| CS / CSB   | 3V3              |
+| SDO / ADDR | GND (0x76)       |
 
 Notes:
 
-- Expected I2C address is 0x76.
+- This project uses I2C mode, so CS/CSB must be tied HIGH (3V3).
+- SDO/ADDR selects I2C address:
+  - SDO to GND -> 0x76 (default in this project)
+  - SDO to 3V3 -> 0x77
 - If your module is 0x77, update BME680_I2C_ADDR in include/config.h.
+- If your sensor board has a QWIIC/STEMMA-QT connector, it is still the same I2C bus (SDA/SCL). You may use either QWIIC cable or direct GPIO wiring.
 
 ## Project Structure
 
@@ -110,6 +116,18 @@ platformio run -e lilygo-t-display-s3 -t upload --upload-port COMx
 platformio device monitor -b 115200
 ```
 
+Firmware now prints I2C/BME680 diagnostics every 5 seconds. Look for these lines:
+
+- `[I2C] main(...)` full scan on primary bus (GPIO18/GPIO17)
+- `[I2C] alt(...)` full scan on fallback bus (GPIO44/GPIO43)
+- `[I2C] ...` quick probe of touch and BME680 addresses on both buses
+- `[BME680] ...` sensor detection status and latest data snapshot
+
+Firmware will auto-probe BME680 on both buses and pick the first valid one:
+
+- MAIN bus: GPIO18 (SDA), GPIO17 (SCL)
+- ALT bus: GPIO44 (SDA), GPIO43 (SCL)
+
 ## Runtime Behavior
 
 - Boot performs hardware checks and shows OK or FAIL states.
@@ -134,7 +152,11 @@ Edit include/config.h for common adjustments:
   - Firmware probes touch at 0x15 and 0x1A automatically.
 - Sensor FAIL on boot:
   - Recheck SDA/SCL wiring and power.
+  - For I2C mode modules with CS/SDO pins: CS must be tied to 3V3.
+  - SDO to GND = 0x76, SDO to 3V3 = 0x77.
   - Verify BME680 I2C address (0x76 or 0x77).
+  - Open Serial Monitor and read `[I2C]` / `[BME680]` debug output every 5 seconds.
+  - If BME appears only on `alt(...)` scan, move wiring to GPIO44/43 or update your cable breakout accordingly.
 - Build command not found:
   - Use full PlatformIO executable path from your user profile.
 
@@ -159,3 +181,6 @@ Managed in platformio.ini:
 - Updated Page 03 system info cadence: CPU Load and Storage now refresh every 5 seconds for lower power impact.
 - Updated Page 03 storage text to numeric free/total MB format without float printf.
 - Updated gas resistance unit fallback to ASCII `kOhm` for font compatibility on-board.
+- Clarified BME680 I2C wiring for modules with CS/SDO pins (CS to 3V3, SDO for 0x76/0x77 address select).
+- Added periodic serial diagnostics (every 5 seconds) for I2C probe and BME680 detection/data status.
+- Added dual-bus BME680 auto-probe (main 18/17 and fallback 44/43) with detailed serial monitor output.
