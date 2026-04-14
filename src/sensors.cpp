@@ -203,7 +203,8 @@ namespace
                 g_live.humidity_pct = out.signal;
                 break;
             case BSEC_OUTPUT_RAW_PRESSURE:
-                g_live.pressure_hpa = out.signal / 100.0f;
+                // bsec2.cpp already converts pressure from Pa to hPa before processing.
+                g_live.pressure_hpa = out.signal;
                 break;
             case BSEC_OUTPUT_RAW_GAS:
                 g_live.gas_resistance_kohm = out.signal / 1000.0f;
@@ -226,6 +227,14 @@ namespace
         g_sensor_data.iaq_accuracy = 0;
         g_sensor_data.valid = false;
         g_sensor_data.last_update_ms = 0;
+
+        g_live.temperature_c = NAN;
+        g_live.humidity_pct = NAN;
+        g_live.pressure_hpa = NAN;
+        g_live.gas_resistance_kohm = NAN;
+        g_live.iaq = NAN;
+        g_live.iaq_accuracy = 0;
+        g_live.has_new_sample = false;
     }
 
     bool restore_bsec_state()
@@ -375,8 +384,8 @@ bool sensors_init()
 
     const RateCandidate rate_candidates[] = {
         {BSEC_SAMPLE_RATE_LP, "LP"},
-        {BSEC_SAMPLE_RATE_ULP, "ULP"},
         {BSEC_SAMPLE_RATE_CONT, "CONT"},
+        {BSEC_SAMPLE_RATE_ULP, "ULP"},
     };
 
     bool subscription_ok = false;
@@ -414,7 +423,24 @@ bool sensors_init()
     g_nvs.begin("bsec2", false);
     restore_bsec_state();
 
-    g_last_publish_ms = 0;
+    // Try to obtain first valid sample right after successful init so UI can update early.
+    const uint32_t warmup_start_ms = millis();
+    while ((millis() - warmup_start_ms < 2500U) && !g_live.has_new_sample)
+    {
+        g_bsec.run();
+        delay(40);
+    }
+
+    if (g_live.has_new_sample)
+    {
+        const uint32_t now_ms = millis();
+        publish_snapshot(now_ms);
+        g_last_publish_ms = now_ms;
+    }
+    else
+    {
+        g_last_publish_ms = 0;
+    }
     g_last_state_save_ms = millis();
     return true;
 }
@@ -587,7 +613,8 @@ void sensorTask(void * /*parameter*/)
             g_bsec.run();
             const uint32_t now_ms = millis();
 
-            if (now_ms - g_last_publish_ms >= SENSOR_REFRESH)
+            // Publish as soon as BSEC provides a fresh sample (including first sample).
+            if (g_live.has_new_sample)
             {
                 publish_snapshot(now_ms);
                 g_last_publish_ms = now_ms;

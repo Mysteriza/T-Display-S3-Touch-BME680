@@ -110,6 +110,20 @@ Quick verification after switching to QWIIC:
 3. Confirm BME680 appears in `[I2C] alt(...)` or `[I2C] main(...)` scan at 0x76/0x77.
 4. Confirm boot self-check reports sensor `[OK]`.
 
+Validated QWIIC wiring that works in this project:
+
+- VCC -> 3V3
+- GND -> GND
+- SCL -> QWIIC SCL / GPIO44
+- SDA -> QWIIC SDA / GPIO43
+- CS/CSB -> 3V3 (force I2C mode)
+
+Observed runtime result with this wiring:
+
+- Sensor detected on ALT bus (GPIO43/GPIO44)
+- Address detected at 0x77
+- CHIP_ID detected as 0x61 (valid BME68x)
+
 ## Project Structure
 
 - include/config.h: Pin map, timing values, color constants
@@ -171,6 +185,7 @@ Firmware will auto-probe BME680 on both buses and pick the first valid one:
 - Display timeout default is 15 seconds of inactivity.
 - Any touch activity or wake button event resets the timeout.
 - If BME680 init fails during early boot timing, firmware retries sensor init automatically in background.
+- Firmware now publishes the first sensor snapshot as soon as the first valid BSEC sample is available (no 30-second initial wait).
 
 ## Configuration
 
@@ -233,3 +248,8 @@ Managed in platformio.ini:
 - Improved BME680 robustness with multi-address auto-detect (0x76/0x77) and automatic init retry when early boot probe fails.
 - Added BME68x CHIP_ID (0x61) validation in diagnostics to detect wrong devices responding at 0x76/0x77.
 - Added automatic BSEC subscription fallback across sample-rate modes (LP/ULP/CONT) to handle samplerate mismatch warnings (`bsec_status=14`).
+- Fixed pressure scaling path (removed double conversion), which restores realistic pressure and derived altitude values.
+- Improved first-sample UX by publishing sensor data immediately after first valid BSEC output instead of waiting for periodic interval.
+- Updated Page 01 numeric card typography (smaller value font) to avoid overlap with card titles.
+- Updated Temp/Humidity/Pressure formatting to 2 decimal places.
+- Added IAQ status/risk mapping with dynamic labels and IAQ color state on Page 02.

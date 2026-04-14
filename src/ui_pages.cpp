@@ -96,6 +96,13 @@ namespace
     uint32_t g_last_cpu_refresh_ms = 0;
     uint32_t g_last_sys_info_refresh_ms = 0;
 
+    struct IaqDescriptor
+    {
+        const char *status;
+        const char *risk;
+        uint32_t color;
+    };
+
     esp_adc_cal_characteristics_t g_bat_adc_chars;
     bool g_bat_adc_ready = false;
 
@@ -231,6 +238,31 @@ namespace
         return smoothed;
     }
 
+    IaqDescriptor describe_iaq(int32_t iaq)
+    {
+        if (iaq <= 50)
+        {
+            return {"Excellent", "Very Low", 0x39FF14};
+        }
+        if (iaq <= 100)
+        {
+            return {"Good", "Low", 0x6BDF3C};
+        }
+        if (iaq <= 150)
+        {
+            return {"Moderate", "Medium", 0xE8D33A};
+        }
+        if (iaq <= 200)
+        {
+            return {"Poor", "Elevated", 0xF4A13A};
+        }
+        if (iaq <= 300)
+        {
+            return {"Unhealthy", "High", 0xFF6C37};
+        }
+        return {"Hazardous", "Very High", 0xFF3B30};
+    }
+
     uint32_t read_battery_mv(bool *has_battery)
     {
         if (!g_bat_adc_ready)
@@ -347,8 +379,8 @@ namespace
         *value_label = lv_label_create(card);
         lv_label_set_text(*value_label, "--");
         lv_obj_set_style_text_color(*value_label, lv_color_hex(COLOR_VALUE), 0);
-        lv_obj_set_style_text_font(*value_label, &lv_font_montserrat_36, 0);
-        lv_obj_align(*value_label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+        lv_obj_set_style_text_font(*value_label, &lv_font_montserrat_20, 0);
+        lv_obj_align(*value_label, LV_ALIGN_BOTTOM_LEFT, 0, 2);
 
         return card;
     }
@@ -597,19 +629,19 @@ namespace
 
         if (data.valid)
         {
-            snprintf(text, sizeof(text), "%.1f °C", data.temperature_c);
+            snprintf(text, sizeof(text), "%.2f °C", data.temperature_c);
             lv_label_set_text(g_temp_value, text);
 
-            snprintf(text, sizeof(text), "%.0f %%", data.humidity_pct);
+            snprintf(text, sizeof(text), "%.2f %%", data.humidity_pct);
             lv_label_set_text(g_hum_value, text);
 
-            snprintf(text, sizeof(text), "%.0f hPa", data.pressure_hpa);
+            snprintf(text, sizeof(text), "%.2f hPa", data.pressure_hpa);
             lv_label_set_text(g_press_value, text);
 
-            snprintf(text, sizeof(text), "%.0f m", data.altitude_m);
+            snprintf(text, sizeof(text), "%.1f m", data.altitude_m);
             lv_label_set_text(g_alt_value, text);
 
-            snprintf(text, sizeof(text), "%.1f kOhm", data.gas_resistance_kohm);
+            snprintf(text, sizeof(text), "%.2f kOhm", data.gas_resistance_kohm);
             lv_label_set_text_fmt(g_gas_value, "Gas res.\n%s", text);
 
             lv_label_set_text_fmt(g_acc_value, "Accuracy\nLvl %u", data.iaq_accuracy);
@@ -619,14 +651,16 @@ namespace
             iaq_value = clamp_i32(iaq_value, 0, 500);
             lv_arc_set_value(g_iaq_arc, iaq_value);
 
-            // Keep status and risk placeholders empty until real mapping/source is defined.
-            lv_label_set_text(g_iaq_status, "Status\n-");
-            lv_label_set_text(g_iaq_risk, "Risk\n-");
-            lv_obj_set_style_arc_color(g_iaq_arc, lv_color_hex(COLOR_STATUS), LV_PART_INDICATOR);
+            const IaqDescriptor iaq_desc = describe_iaq(iaq_value);
+            lv_label_set_text_fmt(g_iaq_status, "Status\n%s", iaq_desc.status);
+            lv_label_set_text_fmt(g_iaq_risk, "Risk\n%s", iaq_desc.risk);
+            lv_obj_set_style_arc_color(g_iaq_arc, lv_color_hex(iaq_desc.color), LV_PART_INDICATOR);
+            lv_obj_set_style_text_color(g_iaq_status, lv_color_hex(iaq_desc.color), 0);
+            lv_obj_set_style_text_color(g_iaq_risk, lv_color_hex(0xFFFFFF), 0);
 
-            snprintf(text, sizeof(text), "%.1f °C", data.temperature_c);
+            snprintf(text, sizeof(text), "%.2f °C", data.temperature_c);
             lv_label_set_text(g_p2_temp, text);
-            snprintf(text, sizeof(text), "%.0f %%", data.humidity_pct);
+            snprintf(text, sizeof(text), "%.2f %%", data.humidity_pct);
             lv_label_set_text(g_p2_hum, text);
         }
 
