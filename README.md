@@ -61,8 +61,8 @@ Connect BME680 to T-Display-S3 as follows:
 | ---------- | ---------------- |
 | VCC        | 3V3              |
 | GND        | GND              |
-| SDA        | GPIO18           |
-| SCL        | GPIO17           |
+| SDA        | GPIO43           |
+| SCL        | GPIO44           |
 | CS / CSB   | 3V3              |
 | SDO / ADDR | GND (0x76)       |
 
@@ -72,8 +72,40 @@ Notes:
 - SDO/ADDR selects I2C address:
   - SDO to GND -> 0x76 (default in this project)
   - SDO to 3V3 -> 0x77
-- If your module is 0x77, update BME680_I2C_ADDR in include/config.h.
+- Firmware auto-detects BME680 at 0x76 or 0x77. You can keep default config for most setups.
 - If your sensor board has a QWIIC/STEMMA-QT connector, it is still the same I2C bus (SDA/SCL). You may use either QWIIC cable or direct GPIO wiring.
+- Firmware will try sensor bus GPIO43/GPIO44 first, then fallback to GPIO18/GPIO17.
+
+### 3) Alternative: BME680 via QWIIC Port
+
+If both boards provide QWIIC/STEMMA-QT sockets, use a 4-pin JST-SH cable directly:
+
+- T-Display-S3 QWIIC <-> BME680 QWIIC/STEMMA-QT
+- No separate SDA/SCL jumper wires are needed.
+
+QWIIC signal map (standard 4-wire I2C):
+
+| QWIIC Signal | Function  |
+| ------------ | --------- |
+| GND          | Ground    |
+| 3V3          | Power     |
+| SDA          | I2C Data  |
+| SCL          | I2C Clock |
+
+Important notes for QWIIC usage:
+
+- QWIIC is only a physical connector; protocol remains standard I2C.
+- Firmware still uses the same auto-probe logic: GPIO43/44 preferred, GPIO18/17 fallback.
+- For modules exposing CS/SDO pins or jumpers:
+  - CS/CSB must be HIGH (3V3) for I2C mode.
+  - SDO selects address: 0x76 (GND) or 0x77 (3V3). Firmware auto-detects both.
+
+Quick verification after switching to QWIIC:
+
+1. Upload firmware as usual.
+2. Open serial monitor at 115200.
+3. Confirm BME680 appears in `[I2C] alt(...)` or `[I2C] main(...)` scan at 0x76/0x77.
+4. Confirm boot self-check reports sensor `[OK]`.
 
 ## Project Structure
 
@@ -118,29 +150,30 @@ platformio device monitor -b 115200
 
 Firmware now prints I2C/BME680 diagnostics every 5 seconds. Look for these lines:
 
-- `[I2C] main(...)` full scan on primary bus (GPIO18/GPIO17)
-- `[I2C] alt(...)` full scan on fallback bus (GPIO44/GPIO43)
+- `[I2C] main(...)` full scan on shared bus (GPIO18/GPIO17, touch bus)
+- `[I2C] alt(...)` full scan on preferred sensor bus (GPIO43/GPIO44)
 - `[I2C] ...` quick probe of touch and BME680 addresses on both buses
 - `[BME680] ...` sensor detection status and latest data snapshot
 
 Firmware will auto-probe BME680 on both buses and pick the first valid one:
 
-- MAIN bus: GPIO18 (SDA), GPIO17 (SCL)
-- ALT bus: GPIO44 (SDA), GPIO43 (SCL)
+- Preferred bus: GPIO43 (SDA), GPIO44 (SCL)
+- Fallback bus: GPIO18 (SDA), GPIO17 (SCL)
 
 ## Runtime Behavior
 
 - Boot performs hardware checks and shows OK or FAIL states.
 - UI starts on Page 1.
 - Swipe left or right to change page.
-- Display timeout default is 10 seconds of inactivity.
+- Display timeout default is 15 seconds of inactivity.
 - Any touch activity or wake button event resets the timeout.
+- If BME680 init fails during early boot timing, firmware retries sensor init automatically in background.
 
 ## Configuration
 
 Edit include/config.h for common adjustments:
 
-- DISPLAY_TIMEOUT (default 10000 ms)
+- DISPLAY_TIMEOUT (default 15000 ms)
 - SENSOR_REFRESH (default 30000 ms)
 - I2C pins and addresses
 - UI color constants
@@ -154,9 +187,12 @@ Edit include/config.h for common adjustments:
   - Recheck SDA/SCL wiring and power.
   - For I2C mode modules with CS/SDO pins: CS must be tied to 3V3.
   - SDO to GND = 0x76, SDO to 3V3 = 0x77.
-  - Verify BME680 I2C address (0x76 or 0x77).
+  - Firmware auto-detects both 0x76 and 0x77; ensure SDO strap is stable and not floating.
+  - BME680/BME688 must report CHIP_ID `0x61`. If serial says device exists at 0x76/0x77 but CHIP_ID is not `0x61`, the connected module is likely not a BME68x sensor.
+  - If serial shows `bsec_status=14` during init, firmware now auto-falls back across BSEC sample-rate modes (LP -> ULP -> CONT) to find a compatible subscription.
   - Open Serial Monitor and read `[I2C]` / `[BME680]` debug output every 5 seconds.
-  - If BME appears only on `alt(...)` scan, move wiring to GPIO44/43 or update your cable breakout accordingly.
+  - If BME appears only on `alt(...)` scan, keep wiring on GPIO43/44.
+  - If BME appears only on `main(...)` scan, move wiring to GPIO18/17.
 - Build command not found:
   - Use full PlatformIO executable path from your user profile.
 
@@ -178,9 +214,19 @@ Managed in platformio.ini:
 - Added BSEC2 state persistence to NVS.
 - Added complete PlatformIO dependency and build configuration.
 - Added battery percentage indicator at top-center on all pages using built-in board ADC battery sensing.
-- Updated Page 03 system info cadence: CPU Load and Storage now refresh every 5 seconds for lower power impact.
+- Updated Page 03 system info cadence: CPU Load refreshes every 2 seconds, while Storage/Battery refresh every 5 seconds.
 - Updated Page 03 storage text to numeric free/total MB format without float printf.
 - Updated gas resistance unit fallback to ASCII `kOhm` for font compatibility on-board.
 - Clarified BME680 I2C wiring for modules with CS/SDO pins (CS to 3V3, SDO for 0x76/0x77 address select).
 - Added periodic serial diagnostics (every 5 seconds) for I2C probe and BME680 detection/data status.
-- Added dual-bus BME680 auto-probe (main 18/17 and fallback 44/43) with detailed serial monitor output.
+- Added dual-bus BME680 auto-probe with preferred sensor bus 43/44 and fallback 18/17, plus detailed serial monitor output.
+- Improved top header symmetry by aligning `Env_monitor` vertically with battery indicator and PAGE labels on all pages.
+- Changed default display timeout from 10 seconds to 15 seconds.
+- Lowered and re-centered IAQ gauge placement on Page 02 to keep safe spacing from the battery indicator.
+- Removed duplicate `Uptime` subtitle on Page 03 and kept uptime context in the top-right page header only.
+- Simplified battery label text to icon + percentage only (including USB-powered mode), kept top-center alignment.
+- Fine-tuned `Env_monitor` vertical offset by 1px upward for tighter alignment with battery and PAGE header text.
+- Added explicit QWIIC wiring alternative section (direct cable method, address notes, and verification steps).
+- Improved BME680 robustness with multi-address auto-detect (0x76/0x77) and automatic init retry when early boot probe fails.
+- Added BME68x CHIP_ID (0x61) validation in diagnostics to detect wrong devices responding at 0x76/0x77.
+- Added automatic BSEC subscription fallback across sample-rate modes (LP/ULP/CONT) to handle samplerate mismatch warnings (`bsec_status=14`).

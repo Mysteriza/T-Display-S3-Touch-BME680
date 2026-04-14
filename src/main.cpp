@@ -1,5 +1,4 @@
 #include <Arduino.h>
-
 #include "power_mgmt.h"
 #include "sensors.h"
 #include "ui_pages.h"
@@ -26,10 +25,7 @@ void setup()
 
   ui_build_pages();
 
-  if (boot_status.sensor_ok)
-  {
-    xTaskCreatePinnedToCore(sensorTask, "sensorTask", 8192, nullptr, 2, nullptr, 0);
-  }
+  xTaskCreatePinnedToCore(sensorTask, "sensorTask", 8192, nullptr, 2, nullptr, 0);
   xTaskCreatePinnedToCore(uiTask, "uiTask", 12288, nullptr, 2, nullptr, 1);
 }
 

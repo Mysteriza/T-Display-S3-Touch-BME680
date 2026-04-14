@@ -93,6 +93,7 @@ namespace
     lv_obj_t *g_battery_labels[3] = {nullptr, nullptr, nullptr};
 
     uint32_t g_last_ui_refresh_ms = 0;
+    uint32_t g_last_cpu_refresh_ms = 0;
     uint32_t g_last_sys_info_refresh_ms = 0;
 
     esp_adc_cal_characteristics_t g_bat_adc_chars;
@@ -130,6 +131,104 @@ namespace
             return 100;
         }
         return static_cast<uint8_t>(((mv - BATTERY_MIN_MV) * 100U) / (BATTERY_MAX_MV - BATTERY_MIN_MV));
+    }
+
+    lv_color_t blend_hex_colors(uint32_t from_hex, uint32_t to_hex, uint8_t mix_255)
+    {
+        const uint32_t inv = 255U - mix_255;
+
+        const uint32_t from_r = (from_hex >> 16) & 0xFFU;
+        const uint32_t from_g = (from_hex >> 8) & 0xFFU;
+        const uint32_t from_b = from_hex & 0xFFU;
+
+        const uint32_t to_r = (to_hex >> 16) & 0xFFU;
+        const uint32_t to_g = (to_hex >> 8) & 0xFFU;
+        const uint32_t to_b = to_hex & 0xFFU;
+
+        const uint32_t r = (from_r * inv + to_r * mix_255 + 127U) / 255U;
+        const uint32_t g = (from_g * inv + to_g * mix_255 + 127U) / 255U;
+        const uint32_t b = (from_b * inv + to_b * mix_255 + 127U) / 255U;
+
+        return lv_color_make(static_cast<uint8_t>(r), static_cast<uint8_t>(g), static_cast<uint8_t>(b));
+    }
+
+    lv_color_t battery_color_from_percent(uint8_t percent, bool usb_power)
+    {
+        if (usb_power)
+        {
+            return lv_color_hex(0x2EDC72);
+        }
+
+        // Multi-stop ramp from green -> yellow -> orange -> red.
+        static const uint8_t kStopsPercent[] = {100, 90, 80, 70, 60, 50, 40, 30, 20, 10};
+        static const uint32_t kStopsColor[] = {
+            0x2EDC72,
+            0x4FD968,
+            0x73D55D,
+            0x97D153,
+            0xBCD049,
+            0xD9C444,
+            0xEEAF3E,
+            0xF99339,
+            0xFD6D35,
+            0xFF3B30,
+        };
+
+        const uint8_t p = static_cast<uint8_t>(clamp_i32(percent, 10, 100));
+        const size_t stop_count = sizeof(kStopsPercent) / sizeof(kStopsPercent[0]);
+        for (size_t i = 0; i + 1U < stop_count; ++i)
+        {
+            const uint8_t high = kStopsPercent[i];
+            const uint8_t low = kStopsPercent[i + 1U];
+            if ((p <= high) && (p >= low))
+            {
+                const uint8_t span = static_cast<uint8_t>(high - low);
+                const uint8_t progress = static_cast<uint8_t>(high - p);
+                const uint8_t mix_255 = (span == 0U) ? 0U : static_cast<uint8_t>((255U * progress) / span);
+                return blend_hex_colors(kStopsColor[i], kStopsColor[i + 1U], mix_255);
+            }
+        }
+
+        return lv_color_hex(kStopsColor[stop_count - 1U]);
+    }
+
+    uint8_t estimate_cpu_load_percent(uint32_t now_ms)
+    {
+        // This is a lightweight estimator (not true core utilization).
+        // It combines heap usage baseline + memory churn + small time variation,
+        // then smooths the result to keep UI readable.
+        static uint32_t prev_heap_free = 0;
+        static uint8_t smoothed = 0;
+
+        const uint32_t heap_free = ESP.getFreeHeap();
+        const uint32_t heap_total = ESP.getHeapSize();
+
+        uint32_t heap_used_pct = 0;
+        if (heap_total > 0U)
+        {
+            heap_used_pct = (100UL * (heap_total - heap_free)) / heap_total;
+        }
+
+        uint32_t heap_delta = 0;
+        if (prev_heap_free != 0U)
+        {
+            heap_delta = (heap_free > prev_heap_free) ? (heap_free - prev_heap_free) : (prev_heap_free - heap_free);
+        }
+        prev_heap_free = heap_free;
+
+        const uint32_t churn_term = (heap_delta > 2048U) ? 20U : (heap_delta / 100U);
+        const uint32_t wave_term = (now_ms / 1000UL) % 7UL;
+
+        const int32_t instant = clamp_i32(static_cast<int32_t>(8U + (heap_used_pct / 2U) + churn_term + wave_term), 5, 95);
+        if (smoothed == 0U)
+        {
+            smoothed = static_cast<uint8_t>(instant);
+        }
+        else
+        {
+            smoothed = static_cast<uint8_t>((3U * smoothed + static_cast<uint8_t>(instant)) / 4U);
+        }
+        return smoothed;
     }
 
     uint32_t read_battery_mv(bool *has_battery)
@@ -171,6 +270,9 @@ namespace
         bool has_battery = false;
         const uint32_t bat_mv = read_battery_mv(&has_battery);
         const uint8_t bat_pct = battery_percent_from_mv(bat_mv);
+        const bool usb_power = !has_battery;
+        const uint8_t shown_pct = usb_power ? 100U : bat_pct;
+        const lv_color_t text_color = battery_color_from_percent(shown_pct, usb_power);
 
         for (uint8_t i = 0; i < 3; ++i)
         {
@@ -179,14 +281,10 @@ namespace
                 continue;
             }
 
-            if (has_battery)
-            {
-                lv_label_set_text_fmt(g_battery_labels[i], LV_SYMBOL_BATTERY_FULL " %u%%", bat_pct);
-            }
-            else
-            {
-                lv_label_set_text(g_battery_labels[i], LV_SYMBOL_BATTERY_EMPTY " USB");
-            }
+            lv_obj_set_style_text_color(g_battery_labels[i], text_color, 0);
+            lv_obj_align(g_battery_labels[i], LV_ALIGN_TOP_MID, 0, 8);
+
+            lv_label_set_text_fmt(g_battery_labels[i], LV_SYMBOL_BATTERY_FULL " %u%%", shown_pct);
         }
     }
 
@@ -323,7 +421,7 @@ namespace
         lv_label_set_text(header_left, LV_SYMBOL_DIRECTORY " Env_monitor");
         lv_obj_set_style_text_color(header_left, lv_color_hex(COLOR_VALUE), 0);
         lv_obj_set_style_text_font(header_left, &lv_font_montserrat_14, 0);
-        lv_obj_align(header_left, LV_ALIGN_TOP_LEFT, 8, 4);
+        lv_obj_align(header_left, LV_ALIGN_TOP_LEFT, 8, 7);
 
         lv_obj_t *header_right = lv_label_create(parent);
         lv_label_set_text(header_right, "PAGE 01 / ENV");
@@ -351,7 +449,7 @@ namespace
         lv_label_set_text(header, LV_SYMBOL_DIRECTORY " Env_monitor");
         lv_obj_set_style_text_color(header, lv_color_hex(COLOR_VALUE), 0);
         lv_obj_set_style_text_font(header, &lv_font_montserrat_14, 0);
-        lv_obj_align(header, LV_ALIGN_TOP_LEFT, 8, 4);
+        lv_obj_align(header, LV_ALIGN_TOP_LEFT, 8, 7);
 
         lv_obj_t *header_right = lv_label_create(parent);
         lv_label_set_text(header_right, "PAGE 02 / AQI");
@@ -375,7 +473,7 @@ namespace
 
         g_iaq_arc = lv_arc_create(parent);
         lv_obj_set_size(g_iaq_arc, 132, 132);
-        lv_obj_align(g_iaq_arc, LV_ALIGN_CENTER, 0, 2);
+        lv_obj_align(g_iaq_arc, LV_ALIGN_CENTER, 0, 12);
         lv_arc_set_rotation(g_iaq_arc, 135);
         lv_arc_set_bg_angles(g_iaq_arc, 0, 270);
         lv_arc_set_range(g_iaq_arc, 0, 500);
@@ -428,7 +526,7 @@ namespace
         lv_label_set_text(header, LV_SYMBOL_DIRECTORY " Env_monitor");
         lv_obj_set_style_text_color(header, lv_color_hex(COLOR_VALUE), 0);
         lv_obj_set_style_text_font(header, &lv_font_montserrat_14, 0);
-        lv_obj_align(header, LV_ALIGN_TOP_LEFT, 8, 4);
+        lv_obj_align(header, LV_ALIGN_TOP_LEFT, 8, 7);
 
         lv_obj_t *header_right = lv_label_create(parent);
         lv_label_set_text(header_right, "PAGE 03 / Uptime");
@@ -438,17 +536,11 @@ namespace
 
         create_battery_label(parent, 2);
 
-        lv_obj_t *title = lv_label_create(parent);
-        lv_label_set_text(title, "Uptime");
-        lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT_DIM), 0);
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 22);
-
         g_uptime_big = lv_label_create(parent);
         lv_label_set_text(g_uptime_big, "00:00:00");
         lv_obj_set_style_text_color(g_uptime_big, lv_color_hex(0xCCFFFF), 0);
         lv_obj_set_style_text_font(g_uptime_big, &lv_font_montserrat_36, 0);
-        lv_obj_align(g_uptime_big, LV_ALIGN_TOP_MID, 0, 42);
+        lv_obj_align(g_uptime_big, LV_ALIGN_TOP_MID, 0, 34);
 
         lv_obj_t *cpu_card = lv_obj_create(parent);
         lv_obj_set_size(cpu_card, 148, 64);
@@ -544,19 +636,16 @@ namespace
         lv_label_set_text_fmt(g_footer_uptime, "Uptime: %s", uptime);
         lv_label_set_text(g_uptime_big, uptime);
 
+        if ((g_last_cpu_refresh_ms == 0U) || (now_ms - g_last_cpu_refresh_ms >= CPU_LOAD_REFRESH_MS))
+        {
+            g_last_cpu_refresh_ms = now_ms;
+            const uint8_t cpu_est = estimate_cpu_load_percent(now_ms);
+            lv_label_set_text_fmt(g_cpu_value, "%u %%", cpu_est);
+        }
+
         if ((g_last_sys_info_refresh_ms == 0U) || (now_ms - g_last_sys_info_refresh_ms >= SYS_INFO_REFRESH_MS))
         {
             g_last_sys_info_refresh_ms = now_ms;
-
-            const uint32_t heap_free = ESP.getFreeHeap();
-            const uint32_t heap_total = ESP.getHeapSize();
-            uint8_t cpu_est = 0;
-            if (heap_total > 0U)
-            {
-                const uint32_t heap_used_pct = (100UL * (heap_total - heap_free)) / heap_total;
-                cpu_est = static_cast<uint8_t>(clamp_i32(static_cast<int32_t>(heap_used_pct), 0, 100));
-            }
-
             const uint32_t storage_total = ESP.getFlashChipSize();
             const uint32_t storage_free = ESP.getFreeSketchSpace();
             const uint32_t bytes_per_mb = 1024UL * 1024UL;
@@ -569,7 +658,6 @@ namespace
                 storage_total_tenths = static_cast<uint32_t>((static_cast<uint64_t>(storage_total) * 10ULL) / bytes_per_mb);
             }
 
-            lv_label_set_text_fmt(g_cpu_value, "%u %%", cpu_est);
             lv_label_set_text_fmt(g_storage_value,
                                   "%lu.%lu/%lu.%lu MB",
                                   static_cast<unsigned long>(storage_free_tenths / 10U),
