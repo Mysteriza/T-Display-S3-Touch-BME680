@@ -1,0 +1,50 @@
+#pragma once
+
+#include <Arduino.h>
+
+// Required project constants.
+#define PIN_LCD_BL 38
+#define PIN_BUTTON_WAKE 14
+#define DISPLAY_TIMEOUT 10000UL
+#define SENSOR_REFRESH 30000UL
+
+#define LCD_ROTATION 3
+
+#define PIN_LCD_POWER 15
+#define PIN_LCD_CS 6
+#define PIN_LCD_DC 7
+#define PIN_LCD_RST 5
+#define PIN_LCD_WR 8
+#define PIN_LCD_RD 9
+
+#define PIN_LCD_D0 39
+#define PIN_LCD_D1 40
+#define PIN_LCD_D2 41
+#define PIN_LCD_D3 42
+#define PIN_LCD_D4 45
+#define PIN_LCD_D5 46
+#define PIN_LCD_D6 47
+#define PIN_LCD_D7 48
+
+#define PIN_TOUCH_RST 21
+#define PIN_TOUCH_INT 16
+#define CST816_I2C_ADDR 0x15
+
+#define PIN_I2C_SDA 18
+#define PIN_I2C_SCL 17
+#define BME680_I2C_ADDR 0x76
+
+#define SCREEN_WIDTH 320
+#define SCREEN_HEIGHT 170
+
+#define BUTTON_DEBOUNCE_MS 120UL
+#define UI_TASK_DELAY_MS 16UL
+#define BSEC_STATE_SAVE_MS (24UL * 60UL * 60UL * 1000UL)
+
+#define COLOR_BG 0x000000
+#define COLOR_CARD_BG 0x0A0A0A
+#define COLOR_BORDER 0x1E3A5F
+#define COLOR_TEXT_DIM 0xA8B0C0
+#define COLOR_VALUE 0x00FFFF
+#define COLOR_STATUS 0x39FF14
+#define COLOR_FAIL 0xFF3B30

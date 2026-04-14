@@ -1,0 +1,668 @@
+#include "ui_pages.h"
+
+#include <Arduino.h>
+#include <TFT_eSPI.h>
+#include <TouchDrv.hpp>
+#include <Wire.h>
+#include <esp_heap_caps.h>
+#include <esp_timer.h>
+#include <lvgl.h>
+
+#include "config.h"
+#include "power_mgmt.h"
+#include "sensors.h"
+
+// Keep explicit declarations so editor diagnostics can resolve these symbols.
+extern const lv_font_t lv_font_montserrat_18;
+extern const lv_font_t lv_font_montserrat_20;
+extern const lv_font_t lv_font_montserrat_22;
+extern const lv_font_t lv_font_montserrat_14;
+extern const lv_font_t lv_font_montserrat_32;
+extern const lv_font_t lv_font_montserrat_36;
+extern const lv_font_t lv_font_montserrat_48;
+extern const lv_font_t lv_font_montserrat_12;
+
+// Fallback aliases help static analysis when build_flags are not applied by the editor.
+#if !defined(LV_FONT_MONTSERRAT_18) || (LV_FONT_MONTSERRAT_18 == 0)
+#define lv_font_montserrat_18 lv_font_montserrat_14
+#endif
+#if !defined(LV_FONT_MONTSERRAT_20) || (LV_FONT_MONTSERRAT_20 == 0)
+#define lv_font_montserrat_20 lv_font_montserrat_14
+#endif
+#if !defined(LV_FONT_MONTSERRAT_22) || (LV_FONT_MONTSERRAT_22 == 0)
+#define lv_font_montserrat_22 lv_font_montserrat_14
+#endif
+#if !defined(LV_FONT_MONTSERRAT_14) || (LV_FONT_MONTSERRAT_14 == 0)
+#define lv_font_montserrat_14 LV_FONT_DEFAULT
+#endif
+#if !defined(LV_FONT_MONTSERRAT_32) || (LV_FONT_MONTSERRAT_32 == 0)
+#define lv_font_montserrat_32 lv_font_montserrat_14
+#endif
+#if !defined(LV_FONT_MONTSERRAT_36) || (LV_FONT_MONTSERRAT_36 == 0)
+#define lv_font_montserrat_36 lv_font_montserrat_14
+#endif
+#if !defined(LV_FONT_MONTSERRAT_48) || (LV_FONT_MONTSERRAT_48 == 0)
+#define lv_font_montserrat_48 lv_font_montserrat_14
+#endif
+#if !defined(LV_FONT_MONTSERRAT_12) || (LV_FONT_MONTSERRAT_12 == 0)
+#define lv_font_montserrat_12 lv_font_montserrat_14
+#endif
+
+namespace
+{
+
+    TFT_eSPI g_tft;
+    lv_disp_draw_buf_t g_draw_buf;
+    lv_color_t *g_buf_a = nullptr;
+    lv_color_t *g_buf_b = nullptr;
+    lv_indev_t *g_touch_indev = nullptr;
+    TouchDrvCSTXXX g_touch;
+    uint8_t g_touch_addr = 0;
+
+    bool g_lvgl_ready = false;
+    bool g_touch_ready = false;
+
+    lv_obj_t *g_boot_title = nullptr;
+    lv_obj_t *g_boot_lcd = nullptr;
+    lv_obj_t *g_boot_touch = nullptr;
+    lv_obj_t *g_boot_sensor = nullptr;
+
+    lv_obj_t *g_pages[3] = {nullptr, nullptr, nullptr};
+    uint8_t g_current_page = 0;
+
+    lv_obj_t *g_temp_value = nullptr;
+    lv_obj_t *g_hum_value = nullptr;
+    lv_obj_t *g_press_value = nullptr;
+    lv_obj_t *g_alt_value = nullptr;
+    lv_obj_t *g_footer_uptime = nullptr;
+
+    lv_obj_t *g_iaq_arc = nullptr;
+    lv_obj_t *g_iaq_value = nullptr;
+    lv_obj_t *g_iaq_status = nullptr;
+    lv_obj_t *g_iaq_risk = nullptr;
+    lv_obj_t *g_gas_value = nullptr;
+    lv_obj_t *g_acc_value = nullptr;
+    lv_obj_t *g_p2_temp = nullptr;
+    lv_obj_t *g_p2_hum = nullptr;
+
+    lv_obj_t *g_uptime_big = nullptr;
+    lv_obj_t *g_cpu_value = nullptr;
+    lv_obj_t *g_storage_value = nullptr;
+
+    uint32_t g_last_ui_refresh_ms = 0;
+
+    int32_t clamp_i32(int32_t value, int32_t low, int32_t high)
+    {
+        if (value < low)
+        {
+            return low;
+        }
+        if (value > high)
+        {
+            return high;
+        }
+        return value;
+    }
+
+    void format_uptime(char *out, size_t out_len, uint32_t uptime_seconds)
+    {
+        const uint32_t hours = uptime_seconds / 3600U;
+        const uint32_t minutes = (uptime_seconds % 3600U) / 60U;
+        const uint32_t seconds = uptime_seconds % 60U;
+        snprintf(out, out_len, "%02lu:%02lu:%02lu", hours, minutes, seconds);
+    }
+
+    bool probe_touch_addr(uint8_t address)
+    {
+        Wire.beginTransmission(address);
+        return Wire.endTransmission() == 0;
+    }
+
+    void touch_read_cb(lv_indev_drv_t * /*drv*/, lv_indev_data_t *data)
+    {
+        if (g_touch_ready)
+        {
+            const TouchPoints &touch_points = g_touch.getTouchPoints();
+            if (touch_points.hasPoints())
+            {
+                const TouchPoint &p = touch_points.getPoint(0);
+                data->state = LV_INDEV_STATE_PRESSED;
+                data->point.x = static_cast<lv_coord_t>(clamp_i32(p.x, 0, SCREEN_WIDTH - 1));
+                data->point.y = static_cast<lv_coord_t>(clamp_i32(p.y, 0, SCREEN_HEIGHT - 1));
+                wake_system_reset();
+                return;
+            }
+        }
+
+        data->state = LV_INDEV_STATE_RELEASED;
+    }
+
+    void display_flush_cb(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
+    {
+        const uint16_t width = static_cast<uint16_t>(area->x2 - area->x1 + 1);
+        const uint16_t height = static_cast<uint16_t>(area->y2 - area->y1 + 1);
+
+        g_tft.startWrite();
+        g_tft.setAddrWindow(area->x1, area->y1, width, height);
+        g_tft.pushColors(reinterpret_cast<uint16_t *>(&color_p->full), width * height, true);
+        g_tft.endWrite();
+
+        lv_disp_flush_ready(disp);
+    }
+
+    lv_obj_t *create_card(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
+                          const char *title, lv_obj_t **value_label)
+    {
+        lv_obj_t *card = lv_obj_create(parent);
+        lv_obj_set_size(card, w, h);
+        lv_obj_set_pos(card, x, y);
+        lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_CARD_BG), 0);
+        lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), 0);
+        lv_obj_set_style_border_width(card, 1, 0);
+        lv_obj_set_style_radius(card, 12, 0);
+        lv_obj_set_style_pad_all(card, 8, 0);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *title_label = lv_label_create(card);
+        lv_label_set_text(title_label, title);
+        lv_obj_set_style_text_color(title_label, lv_color_hex(COLOR_TEXT_DIM), 0);
+        lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 0, 0);
+
+        *value_label = lv_label_create(card);
+        lv_label_set_text(*value_label, "--");
+        lv_obj_set_style_text_color(*value_label, lv_color_hex(COLOR_VALUE), 0);
+        lv_obj_set_style_text_font(*value_label, &lv_font_montserrat_36, 0);
+        lv_obj_align(*value_label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+        return card;
+    }
+
+    void set_boot_line(lv_obj_t *label, const char *name, bool ok)
+    {
+        char line[96] = {0};
+        snprintf(line,
+                 sizeof(line),
+                 "%s #%.6X [%s]#",
+                 name,
+                 ok ? COLOR_STATUS : COLOR_FAIL,
+                 ok ? "OK" : "FAIL");
+        lv_label_set_recolor(label, true);
+        lv_label_set_text(label, line);
+    }
+
+    void set_page(uint8_t next_page)
+    {
+        if (next_page > 2)
+        {
+            return;
+        }
+
+        g_current_page = next_page;
+        for (uint8_t i = 0; i < 3; ++i)
+        {
+            if (g_pages[i] == nullptr)
+            {
+                continue;
+            }
+            if (i == g_current_page)
+            {
+                lv_obj_clear_flag(g_pages[i], LV_OBJ_FLAG_HIDDEN);
+            }
+            else
+            {
+                lv_obj_add_flag(g_pages[i], LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+
+    void gesture_event_cb(lv_event_t *e)
+    {
+        if (lv_event_get_code(e) != LV_EVENT_GESTURE)
+        {
+            return;
+        }
+
+        lv_indev_t *indev = lv_indev_get_act();
+        if (indev == nullptr)
+        {
+            return;
+        }
+
+        const lv_dir_t direction = lv_indev_get_gesture_dir(indev);
+        if (direction == LV_DIR_LEFT)
+        {
+            set_page((g_current_page + 1U) % 3U);
+        }
+        else if (direction == LV_DIR_RIGHT)
+        {
+            set_page((g_current_page + 2U) % 3U);
+        }
+    }
+
+    void build_page_one(lv_obj_t *parent)
+    {
+        lv_obj_t *header_left = lv_label_create(parent);
+        lv_label_set_text(header_left, LV_SYMBOL_DIRECTORY " Env_monitor");
+        lv_obj_set_style_text_color(header_left, lv_color_hex(COLOR_VALUE), 0);
+        lv_obj_set_style_text_font(header_left, &lv_font_montserrat_14, 0);
+        lv_obj_align(header_left, LV_ALIGN_TOP_LEFT, 8, 4);
+
+        lv_obj_t *header_right = lv_label_create(parent);
+        lv_label_set_text(header_right, "PAGE 01 / ENV");
+        lv_obj_set_style_text_color(header_right, lv_color_hex(COLOR_TEXT_DIM), 0);
+        lv_obj_set_style_text_font(header_right, &lv_font_montserrat_12, 0);
+        lv_obj_align(header_right, LV_ALIGN_TOP_RIGHT, -8, 8);
+
+        create_card(parent, 8, 30, 148, 58, "TEMP", &g_temp_value);
+        create_card(parent, 164, 30, 148, 58, "HUMIDITY", &g_hum_value);
+        create_card(parent, 8, 94, 148, 58, "PRESSURE", &g_press_value);
+        create_card(parent, 164, 94, 148, 58, "ALTITUDE", &g_alt_value);
+
+        g_footer_uptime = lv_label_create(parent);
+        lv_label_set_text(g_footer_uptime, "Uptime: 00:00:00");
+        lv_obj_set_style_text_color(g_footer_uptime, lv_color_hex(COLOR_TEXT_DIM), 0);
+        lv_obj_set_style_text_font(g_footer_uptime, &lv_font_montserrat_12, 0);
+        lv_obj_align(g_footer_uptime, LV_ALIGN_BOTTOM_MID, 0, -4);
+    }
+
+    void build_page_two(lv_obj_t *parent)
+    {
+        lv_obj_t *header = lv_label_create(parent);
+        lv_label_set_text(header, LV_SYMBOL_DIRECTORY " Env_monitor");
+        lv_obj_set_style_text_color(header, lv_color_hex(COLOR_VALUE), 0);
+        lv_obj_set_style_text_font(header, &lv_font_montserrat_14, 0);
+        lv_obj_align(header, LV_ALIGN_TOP_LEFT, 8, 4);
+
+        lv_obj_t *header_right = lv_label_create(parent);
+        lv_label_set_text(header_right, "PAGE 02 / AQI");
+        lv_obj_set_style_text_color(header_right, lv_color_hex(COLOR_TEXT_DIM), 0);
+        lv_obj_set_style_text_font(header_right, &lv_font_montserrat_12, 0);
+        lv_obj_align(header_right, LV_ALIGN_TOP_RIGHT, -8, 8);
+
+        g_gas_value = lv_label_create(parent);
+        lv_label_set_text(g_gas_value, "Gas res.\n--.- kOhm");
+        lv_obj_set_style_text_color(g_gas_value, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_font(g_gas_value, &lv_font_montserrat_14, 0);
+        lv_obj_align(g_gas_value, LV_ALIGN_LEFT_MID, 8, -24);
+
+        g_acc_value = lv_label_create(parent);
+        lv_label_set_text(g_acc_value, "Accuracy\n-");
+        lv_obj_set_style_text_color(g_acc_value, lv_color_hex(COLOR_STATUS), 0);
+        lv_obj_set_style_text_font(g_acc_value, &lv_font_montserrat_14, 0);
+        lv_obj_align(g_acc_value, LV_ALIGN_LEFT_MID, 8, 34);
+
+        g_iaq_arc = lv_arc_create(parent);
+        lv_obj_set_size(g_iaq_arc, 132, 132);
+        lv_obj_align(g_iaq_arc, LV_ALIGN_CENTER, 0, 2);
+        lv_arc_set_rotation(g_iaq_arc, 135);
+        lv_arc_set_bg_angles(g_iaq_arc, 0, 270);
+        lv_arc_set_range(g_iaq_arc, 0, 500);
+        lv_arc_set_value(g_iaq_arc, 0);
+        lv_obj_set_style_arc_width(g_iaq_arc, 10, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(g_iaq_arc, 10, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(g_iaq_arc, lv_color_hex(0x1C1C1C), LV_PART_MAIN);
+        lv_obj_set_style_arc_color(g_iaq_arc, lv_color_hex(COLOR_STATUS), LV_PART_INDICATOR);
+        lv_obj_remove_style(g_iaq_arc, nullptr, LV_PART_KNOB);
+        lv_obj_clear_flag(g_iaq_arc, LV_OBJ_FLAG_CLICKABLE);
+
+        g_iaq_value = lv_label_create(parent);
+        lv_label_set_text(g_iaq_value, "IAQ\n0");
+        lv_obj_set_style_text_font(g_iaq_value, &lv_font_montserrat_32, 0);
+        lv_obj_set_style_text_color(g_iaq_value, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align_to(g_iaq_value, g_iaq_arc, LV_ALIGN_CENTER, 0, 0);
+
+        g_iaq_status = lv_label_create(parent);
+        lv_label_set_text(g_iaq_status, "Status\n-");
+        lv_obj_set_style_text_font(g_iaq_status, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(g_iaq_status, lv_color_hex(COLOR_STATUS), 0);
+        lv_obj_align(g_iaq_status, LV_ALIGN_RIGHT_MID, -8, -24);
+
+        g_iaq_risk = lv_label_create(parent);
+        lv_label_set_text(g_iaq_risk, "Risk\n-");
+        lv_obj_set_style_text_font(g_iaq_risk, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(g_iaq_risk, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(g_iaq_risk, LV_ALIGN_RIGHT_MID, -8, 34);
+
+        g_p2_temp = lv_label_create(parent);
+        lv_label_set_text(g_p2_temp, "--.- °C");
+        lv_obj_set_style_text_color(g_p2_temp, lv_color_hex(COLOR_TEXT_DIM), 0);
+        lv_obj_align(g_p2_temp, LV_ALIGN_BOTTOM_LEFT, 8, -4);
+
+        g_p2_hum = lv_label_create(parent);
+        lv_label_set_text(g_p2_hum, "--.- %");
+        lv_obj_set_style_text_color(g_p2_hum, lv_color_hex(COLOR_TEXT_DIM), 0);
+        lv_obj_align(g_p2_hum, LV_ALIGN_BOTTOM_RIGHT, -8, -4);
+    }
+
+    void build_page_three(lv_obj_t *parent)
+    {
+        lv_obj_t *header = lv_label_create(parent);
+        lv_label_set_text(header, LV_SYMBOL_DIRECTORY " Env_monitor");
+        lv_obj_set_style_text_color(header, lv_color_hex(COLOR_VALUE), 0);
+        lv_obj_set_style_text_font(header, &lv_font_montserrat_14, 0);
+        lv_obj_align(header, LV_ALIGN_TOP_LEFT, 8, 4);
+
+        lv_obj_t *header_right = lv_label_create(parent);
+        lv_label_set_text(header_right, "PAGE 03 / Uptime");
+        lv_obj_set_style_text_color(header_right, lv_color_hex(COLOR_TEXT_DIM), 0);
+        lv_obj_set_style_text_font(header_right, &lv_font_montserrat_12, 0);
+        lv_obj_align(header_right, LV_ALIGN_TOP_RIGHT, -8, 8);
+
+        lv_obj_t *title = lv_label_create(parent);
+        lv_label_set_text(title, "Uptime");
+        lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT_DIM), 0);
+        lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 22);
+
+        g_uptime_big = lv_label_create(parent);
+        lv_label_set_text(g_uptime_big, "00:00:00");
+        lv_obj_set_style_text_color(g_uptime_big, lv_color_hex(0xCCFFFF), 0);
+        lv_obj_set_style_text_font(g_uptime_big, &lv_font_montserrat_36, 0);
+        lv_obj_align(g_uptime_big, LV_ALIGN_TOP_MID, 0, 42);
+
+        lv_obj_t *cpu_card = lv_obj_create(parent);
+        lv_obj_set_size(cpu_card, 148, 64);
+        lv_obj_set_pos(cpu_card, 8, 98);
+        lv_obj_set_style_bg_color(cpu_card, lv_color_hex(COLOR_CARD_BG), 0);
+        lv_obj_set_style_border_color(cpu_card, lv_color_hex(COLOR_BORDER), 0);
+        lv_obj_set_style_radius(cpu_card, 12, 0);
+        lv_obj_clear_flag(cpu_card, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *cpu_label = lv_label_create(cpu_card);
+        lv_label_set_text(cpu_label, LV_SYMBOL_SETTINGS " Cpu load");
+        lv_obj_set_style_text_color(cpu_label, lv_color_hex(COLOR_TEXT_DIM), 0);
+        lv_obj_set_style_text_font(cpu_label, &lv_font_montserrat_12, 0);
+        lv_obj_align(cpu_label, LV_ALIGN_TOP_LEFT, 0, 0);
+
+        g_cpu_value = lv_label_create(cpu_card);
+        lv_label_set_text(g_cpu_value, "0%");
+        lv_obj_set_style_text_font(g_cpu_value, &lv_font_montserrat_22, 0);
+        lv_obj_set_style_text_color(g_cpu_value, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(g_cpu_value, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+
+        lv_obj_t *storage_card = lv_obj_create(parent);
+        lv_obj_set_size(storage_card, 148, 64);
+        lv_obj_set_pos(storage_card, 164, 98);
+        lv_obj_set_style_bg_color(storage_card, lv_color_hex(COLOR_CARD_BG), 0);
+        lv_obj_set_style_border_color(storage_card, lv_color_hex(COLOR_BORDER), 0);
+        lv_obj_set_style_radius(storage_card, 12, 0);
+        lv_obj_clear_flag(storage_card, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *storage_label = lv_label_create(storage_card);
+        lv_label_set_text(storage_label, LV_SYMBOL_DRIVE " Storage");
+        lv_obj_set_style_text_color(storage_label, lv_color_hex(COLOR_TEXT_DIM), 0);
+        lv_obj_set_style_text_font(storage_label, &lv_font_montserrat_12, 0);
+        lv_obj_align(storage_label, LV_ALIGN_TOP_LEFT, 0, 0);
+
+        g_storage_value = lv_label_create(storage_card);
+        lv_label_set_text(g_storage_value, "0%");
+        lv_obj_set_style_text_font(g_storage_value, &lv_font_montserrat_22, 0);
+        lv_obj_set_style_text_color(g_storage_value, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_align(g_storage_value, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+    }
+
+    void update_page_values()
+    {
+        const uint32_t now_ms = millis();
+        if (now_ms - g_last_ui_refresh_ms < 500)
+        {
+            return;
+        }
+        g_last_ui_refresh_ms = now_ms;
+
+        const SensorData data = sensors_get_data();
+        char text[64] = {0};
+
+        if (data.valid)
+        {
+            snprintf(text, sizeof(text), "%.1f °C", data.temperature_c);
+            lv_label_set_text(g_temp_value, text);
+
+            snprintf(text, sizeof(text), "%.0f %%", data.humidity_pct);
+            lv_label_set_text(g_hum_value, text);
+
+            snprintf(text, sizeof(text), "%.0f hPa", data.pressure_hpa);
+            lv_label_set_text(g_press_value, text);
+
+            snprintf(text, sizeof(text), "%.0f m", data.altitude_m);
+            lv_label_set_text(g_alt_value, text);
+
+            snprintf(text, sizeof(text), "%.1f kOhm", data.gas_resistance_kohm);
+            lv_label_set_text_fmt(g_gas_value, "Gas res.\n%s", text);
+
+            lv_label_set_text_fmt(g_acc_value, "Accuracy\nLvl %u", data.iaq_accuracy);
+            lv_label_set_text_fmt(g_iaq_value, "IAQ\n%u", static_cast<uint32_t>(data.iaq));
+
+            int32_t iaq_value = static_cast<int32_t>(data.iaq);
+            iaq_value = clamp_i32(iaq_value, 0, 500);
+            lv_arc_set_value(g_iaq_arc, iaq_value);
+
+            // Keep status and risk placeholders empty until real mapping/source is defined.
+            lv_label_set_text(g_iaq_status, "Status\n-");
+            lv_label_set_text(g_iaq_risk, "Risk\n-");
+            lv_obj_set_style_arc_color(g_iaq_arc, lv_color_hex(COLOR_STATUS), LV_PART_INDICATOR);
+
+            snprintf(text, sizeof(text), "%.1f °C", data.temperature_c);
+            lv_label_set_text(g_p2_temp, text);
+            snprintf(text, sizeof(text), "%.0f %%", data.humidity_pct);
+            lv_label_set_text(g_p2_hum, text);
+        }
+
+        char uptime[16] = {0};
+        const uint64_t uptime_seconds = static_cast<uint64_t>(esp_timer_get_time()) / 1000000ULL;
+        format_uptime(uptime, sizeof(uptime), static_cast<uint32_t>(uptime_seconds));
+        lv_label_set_text_fmt(g_footer_uptime, "Uptime: %s", uptime);
+        lv_label_set_text(g_uptime_big, uptime);
+
+        const uint32_t heap_free = ESP.getFreeHeap();
+        const uint32_t heap_total = ESP.getHeapSize();
+        const uint8_t cpu_est = static_cast<uint8_t>((now_ms / 200UL) % 35UL + 10UL);
+        uint8_t heap_used_pct = 0;
+        if (heap_total > 0)
+        {
+            heap_used_pct = static_cast<uint8_t>((100UL * (heap_total - heap_free)) / heap_total);
+        }
+        lv_label_set_text_fmt(g_cpu_value, "%u %%", cpu_est);
+        lv_label_set_text_fmt(g_storage_value, "%u %%", heap_used_pct);
+    }
+
+} // namespace
+
+bool ui_init_display()
+{
+    pinMode(PIN_LCD_POWER, OUTPUT);
+    digitalWrite(PIN_LCD_POWER, HIGH);
+    pinMode(PIN_LCD_BL, OUTPUT);
+    digitalWrite(PIN_LCD_BL, HIGH);
+
+    lv_init();
+
+    g_tft.begin();
+    g_tft.setRotation(LCD_ROTATION);
+    g_tft.fillScreen(TFT_BLACK);
+
+    const size_t buf_pixels = SCREEN_WIDTH * 20;
+    g_buf_a = static_cast<lv_color_t *>(heap_caps_malloc(buf_pixels * sizeof(lv_color_t), MALLOC_CAP_DMA));
+    g_buf_b = static_cast<lv_color_t *>(heap_caps_malloc(buf_pixels * sizeof(lv_color_t), MALLOC_CAP_DMA));
+    if (g_buf_a == nullptr || g_buf_b == nullptr)
+    {
+        return false;
+    }
+
+    lv_disp_draw_buf_init(&g_draw_buf, g_buf_a, g_buf_b, buf_pixels);
+
+    static lv_disp_drv_t disp_drv;
+    lv_disp_drv_init(&disp_drv);
+    disp_drv.hor_res = SCREEN_WIDTH;
+    disp_drv.ver_res = SCREEN_HEIGHT;
+    disp_drv.flush_cb = display_flush_cb;
+    disp_drv.draw_buf = &g_draw_buf;
+    lv_disp_drv_register(&disp_drv);
+
+    static lv_indev_drv_t indev_drv;
+    lv_indev_drv_init(&indev_drv);
+    indev_drv.type = LV_INDEV_TYPE_POINTER;
+    indev_drv.read_cb = touch_read_cb;
+    g_touch_indev = lv_indev_drv_register(&indev_drv);
+
+    g_lvgl_ready = true;
+    return true;
+}
+
+bool ui_init_touch()
+{
+    pinMode(PIN_TOUCH_RST, OUTPUT);
+    pinMode(PIN_TOUCH_INT, INPUT_PULLUP);
+
+    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, 400000);
+
+    digitalWrite(PIN_TOUCH_RST, LOW);
+    delay(30);
+    digitalWrite(PIN_TOUCH_RST, HIGH);
+    delay(80);
+
+    g_touch_addr = 0;
+    if (probe_touch_addr(0x15))
+    {
+        g_touch_addr = 0x15;
+    }
+    else if (probe_touch_addr(0x1A))
+    {
+        g_touch_addr = 0x1A;
+    }
+
+    if (g_touch_addr == 0)
+    {
+        g_touch_ready = false;
+        return false;
+    }
+
+    g_touch.setPins(PIN_TOUCH_RST, PIN_TOUCH_INT);
+    g_touch_ready = g_touch.begin(Wire, g_touch_addr, PIN_I2C_SDA, PIN_I2C_SCL);
+
+    if (!g_touch_ready)
+    {
+        return false;
+    }
+
+    g_touch.setMaxCoordinates(SCREEN_WIDTH, SCREEN_HEIGHT);
+    g_touch.setMirrorXY(true, false);
+    g_touch.setSwapXY(true);
+    g_touch.disableAutoSleep();
+    g_touch.setCenterButtonCoordinate(85, 360);
+
+    wake_system_reset();
+    return true;
+}
+
+void ui_boot_diag_begin()
+{
+    if (!g_lvgl_ready)
+    {
+        return;
+    }
+
+    lv_obj_t *screen = lv_obj_create(nullptr);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_border_width(screen, 0, 0);
+    lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+
+    g_boot_title = lv_label_create(screen);
+    lv_label_set_text(g_boot_title, "SYSTEM SELF-CHECK");
+    lv_obj_set_style_text_color(g_boot_title, lv_color_hex(COLOR_VALUE), 0);
+    lv_obj_set_style_text_font(g_boot_title, &lv_font_montserrat_22, 0);
+    lv_obj_align(g_boot_title, LV_ALIGN_TOP_MID, 0, 12);
+
+    g_boot_lcd = lv_label_create(screen);
+    g_boot_touch = lv_label_create(screen);
+    g_boot_sensor = lv_label_create(screen);
+
+    lv_obj_set_style_text_font(g_boot_lcd, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(g_boot_touch, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(g_boot_sensor, &lv_font_montserrat_18, 0);
+
+    lv_obj_align(g_boot_lcd, LV_ALIGN_TOP_LEFT, 16, 56);
+    lv_obj_align(g_boot_touch, LV_ALIGN_TOP_LEFT, 16, 84);
+    lv_obj_align(g_boot_sensor, LV_ALIGN_TOP_LEFT, 16, 112);
+
+    lv_scr_load(screen);
+}
+
+void ui_boot_diag_update(const BootDiagStatus &status)
+{
+    if (!g_lvgl_ready || g_boot_lcd == nullptr)
+    {
+        return;
+    }
+
+    set_boot_line(g_boot_lcd, "LCD Initializing...", status.lcd_ok);
+    set_boot_line(g_boot_touch, "Touch Controller...", status.touch_ok);
+    set_boot_line(g_boot_sensor, "BME680 Sensor...", status.sensor_ok);
+
+    lv_tick_inc(20);
+    lv_timer_handler();
+    delay(20);
+}
+
+void ui_boot_diag_finish(uint32_t hold_ms)
+{
+    if (!g_lvgl_ready)
+    {
+        return;
+    }
+
+    const uint32_t start = millis();
+    while (millis() - start < hold_ms)
+    {
+        lv_tick_inc(20);
+        lv_timer_handler();
+        delay(20);
+    }
+}
+
+void ui_build_pages()
+{
+    if (!g_lvgl_ready)
+    {
+        return;
+    }
+
+    lv_obj_t *root = lv_obj_create(nullptr);
+    lv_obj_set_style_bg_color(root, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_border_width(root, 0, 0);
+    lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(root, gesture_event_cb, LV_EVENT_GESTURE, nullptr);
+
+    for (uint8_t i = 0; i < 3; ++i)
+    {
+        g_pages[i] = lv_obj_create(root);
+        lv_obj_set_size(g_pages[i], SCREEN_WIDTH, SCREEN_HEIGHT);
+        lv_obj_set_pos(g_pages[i], 0, 0);
+        lv_obj_set_style_bg_opa(g_pages[i], LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(g_pages[i], 0, 0);
+        lv_obj_set_style_pad_all(g_pages[i], 0, 0);
+        lv_obj_clear_flag(g_pages[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(g_pages[i], LV_OBJ_FLAG_CLICKABLE);
+    }
+
+    build_page_one(g_pages[0]);
+    build_page_two(g_pages[1]);
+    build_page_three(g_pages[2]);
+    set_page(0);
+
+    lv_scr_load(root);
+}
+
+void uiTask(void * /*parameter*/)
+{
+    for (;;)
+    {
+        if (g_lvgl_ready)
+        {
+            lv_tick_inc(UI_TASK_DELAY_MS);
+            lv_timer_handler();
+            update_page_values();
+        }
+        vTaskDelay(pdMS_TO_TICKS(UI_TASK_DELAY_MS));
+    }
+}
