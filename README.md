@@ -168,6 +168,9 @@ platformio device monitor -b 115200
 
 Firmware now prints diagnostics every 10 seconds.
 
+By default, automatic diagnostics are disabled to keep Serial Monitor clean.
+Use `debug detail on` to enable periodic detailed logs, and `debug detail off` to disable them again.
+
 Healthy mode (concise):
 
 - `[SENSOR] OK ...` shows bus/address, active BSEC mode, sample age, and latest values.
@@ -178,6 +181,24 @@ Troubleshooting mode (detailed):
 - `[I2C] alt(...)` full scan on preferred sensor bus (GPIO43/GPIO44)
 - `[I2C] ...` quick probe of touch and BME680 addresses on both buses
 - `[BME680] ...` sensor detection status and latest data snapshot
+
+Interactive serial commands (type in serial monitor):
+
+- `help`
+- `status`
+- `get slp`
+- `set slp <hPa>`
+- `set alt <meter>`
+- `reset slp`
+- `sensor reinit`
+- `i2c scan`
+- `debug detail on`
+- `debug detail off`
+
+Notes:
+
+- Commands are executed on Enter, and also auto-executed after a short idle timeout if your terminal does not send CR/LF.
+- `set slp` and `set alt` now refresh displayed altitude immediately.
 
 Firmware will auto-probe BME680 on both buses and pick the first valid one:
 
@@ -219,6 +240,8 @@ Edit include/config.h for common adjustments:
   - Open Serial Monitor and read `[SENSOR]` / `[I2C]` / `[BME680]` debug output every 10 seconds.
   - If BME appears only on `alt(...)` scan, keep wiring on GPIO43/44.
   - If BME appears only on `main(...)` scan, move wiring to GPIO18/17.
+  - Use command `sensor reinit` to force re-detection without reboot.
+  - Use `set slp` / `set alt` to calibrate altitude computation to local conditions.
 - Build command not found:
   - Use full PlatformIO executable path from your user profile.
 
@@ -265,3 +288,7 @@ Managed in platformio.ini:
 - Changed default sensor refresh interval from 30 seconds to 15 seconds.
 - Improved sensor reliability with stale-sample watchdog and auto-reinit when data stops updating.
 - Refined serial diagnostics: concise healthy summary plus detailed troubleshooting output, with 10-second cadence.
+- Added interactive serial command interface for live maintenance and calibration (`status`, `set/get slp`, `set alt`, `sensor reinit`, `i2c scan`, debug toggles).
+- Added I2C bus timeout safeguards to reduce risk of long-run bus lockups when sensor disconnects intermittently.
+- Disabled automatic serial debug output by default to keep monitor clean; detailed logs are opt-in via command.
+- Improved serial command parser to accept terminals that do not send newline, and made SLP/altitude calibration effects visible immediately.

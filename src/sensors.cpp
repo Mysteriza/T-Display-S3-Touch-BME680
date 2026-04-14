@@ -5,6 +5,9 @@
 #include <bsec2.h>
 #include <math.h>
 #include <float.h>
+#include <ctype.h>
+#include <string.h>
+#include <stdlib.h>
 
 #include "config.h"
 
@@ -14,11 +17,15 @@ namespace
     Bsec2 g_bsec;
     TwoWire g_alt_wire(1);
     Preferences g_nvs;
+    Preferences g_cfg_nvs;
     SemaphoreHandle_t g_sensor_mutex = nullptr;
     SensorData g_sensor_data{};
     bool g_sensor_healthy = false;
     bool g_alt_bus_enabled = false;
+    bool g_force_detailed_logs = false;
+    bool g_cfg_ready = false;
     float g_active_bsec_rate = BSEC_SAMPLE_RATE_LP;
+    float g_sea_level_hpa = 1013.25f;
 
     TwoWire *g_bme_wire = &Wire;
     uint8_t g_bme_addr = BME680_I2C_ADDR;
@@ -34,6 +41,11 @@ namespace
     constexpr uint32_t SENSOR_STALE_REINIT_MS = SENSOR_REFRESH + 5000UL;
     constexpr uint8_t BME68X_CHIP_ID_REG = 0xD0;
     constexpr uint8_t BME68X_CHIP_ID_VALUE = 0x61;
+    constexpr float SEA_LEVEL_DEFAULT_HPA = 1013.25f;
+    constexpr float SEA_LEVEL_MIN_HPA = 850.0f;
+    constexpr float SEA_LEVEL_MAX_HPA = 1100.0f;
+    constexpr float KNOWN_ALT_MIN_M = -500.0f;
+    constexpr float KNOWN_ALT_MAX_M = 9000.0f;
 
     uint8_t g_bsec_state[BSEC_MAX_STATE_BLOB_SIZE] = {0};
     uint8_t g_bsec_work_buffer[BSEC_MAX_WORKBUFFER_SIZE] = {0};
@@ -51,11 +63,65 @@ namespace
 
     float calc_altitude(float pressure_hpa)
     {
-        if (!isfinite(pressure_hpa) || pressure_hpa <= 0.0f)
+        if (!isfinite(pressure_hpa) || pressure_hpa <= 0.0f || !isfinite(g_sea_level_hpa) || g_sea_level_hpa <= 0.0f)
         {
             return NAN;
         }
-        return 44330.0f * (1.0f - powf(pressure_hpa / 1013.25f, 0.1903f));
+        return 44330.0f * (1.0f - powf(pressure_hpa / g_sea_level_hpa, 0.1903f));
+    }
+
+    bool valid_sea_level_hpa(float hpa)
+    {
+        return isfinite(hpa) && (hpa >= SEA_LEVEL_MIN_HPA) && (hpa <= SEA_LEVEL_MAX_HPA);
+    }
+
+    bool set_sea_level_hpa(float hpa, bool persist)
+    {
+        if (!valid_sea_level_hpa(hpa))
+        {
+            return false;
+        }
+
+        if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(50)) == pdTRUE)
+        {
+            g_sea_level_hpa = hpa;
+            xSemaphoreGive(g_sensor_mutex);
+        }
+        else
+        {
+            g_sea_level_hpa = hpa;
+        }
+
+        if (persist && g_cfg_ready)
+        {
+            g_cfg_nvs.putFloat("slp_hpa", g_sea_level_hpa);
+        }
+
+        return true;
+    }
+
+    bool load_runtime_config()
+    {
+        if (!g_cfg_ready)
+        {
+            g_cfg_ready = g_cfg_nvs.begin("sensorcfg", false);
+        }
+
+        if (!g_cfg_ready)
+        {
+            g_sea_level_hpa = SEA_LEVEL_DEFAULT_HPA;
+            return false;
+        }
+
+        float loaded = g_cfg_nvs.getFloat("slp_hpa", SEA_LEVEL_DEFAULT_HPA);
+        if (!valid_sea_level_hpa(loaded))
+        {
+            loaded = SEA_LEVEL_DEFAULT_HPA;
+            g_cfg_nvs.putFloat("slp_hpa", loaded);
+        }
+
+        g_sea_level_hpa = loaded;
+        return true;
     }
 
     const char *rate_name(float rate)
@@ -140,11 +206,14 @@ namespace
         uint8_t chip_id = 0;
         if (!is_bme68x_chip(bus, addr, &chip_id))
         {
-            Serial.printf("[BME680] skip bus=%s addr=0x%02X: CHIP_ID=0x%02X (expected 0x%02X)\n",
-                          on_alt_bus ? "ALT(43/44)" : "MAIN(18/17)",
-                          addr,
-                          chip_id,
-                          BME68X_CHIP_ID_VALUE);
+            if (g_force_detailed_logs)
+            {
+                Serial.printf("[BME680] skip bus=%s addr=0x%02X: CHIP_ID=0x%02X (expected 0x%02X)\n",
+                              on_alt_bus ? "ALT(43/44)" : "MAIN(18/17)",
+                              addr,
+                              chip_id,
+                              BME68X_CHIP_ID_VALUE);
+            }
             return;
         }
 
@@ -237,6 +306,7 @@ namespace
                 break;
             }
         }
+        g_last_sample_ms = millis();
         g_live.has_new_sample = true;
     }
 
@@ -313,13 +383,282 @@ namespace
         g_sensor_data.valid = has_core_values;
         g_sensor_data.last_update_ms = now_ms;
 
-        if (g_live.has_new_sample)
-        {
-            g_last_sample_ms = now_ms;
-        }
-
         g_live.has_new_sample = false;
         xSemaphoreGive(g_sensor_mutex);
+    }
+
+    void refresh_altitude_from_snapshot()
+    {
+        if (xSemaphoreTake(g_sensor_mutex, pdMS_TO_TICKS(20)) != pdTRUE)
+        {
+            return;
+        }
+
+        if (isfinite(g_sensor_data.pressure_hpa) && g_sensor_data.pressure_hpa > 0.0f)
+        {
+            g_sensor_data.altitude_m = calc_altitude(g_sensor_data.pressure_hpa);
+            g_sensor_data.last_update_ms = millis();
+        }
+
+        xSemaphoreGive(g_sensor_mutex);
+    }
+
+    void print_status_line(const SensorData &snapshot)
+    {
+        const uint32_t now_ms = millis();
+        const uint32_t age_ms = snapshot.valid ? (now_ms - snapshot.last_update_ms) : 0U;
+        if (snapshot.valid)
+        {
+            Serial.printf("[SENSOR] status=%s bus=%s addr=0x%02X mode=%s slp=%.2f hPa age=%lu ms\n",
+                          g_sensor_healthy ? "OK" : "FAIL",
+                          g_bme_on_alt_bus ? "ALT(43/44)" : "MAIN(18/17)",
+                          g_bme_addr,
+                          rate_name(g_active_bsec_rate),
+                          g_sea_level_hpa,
+                          static_cast<unsigned long>(age_ms));
+        }
+        else
+        {
+            Serial.printf("[SENSOR] status=%s bus=%s addr=0x%02X mode=%s slp=%.2f hPa age=n/a\n",
+                          g_sensor_healthy ? "OK" : "FAIL",
+                          g_bme_on_alt_bus ? "ALT(43/44)" : "MAIN(18/17)",
+                          g_bme_addr,
+                          rate_name(g_active_bsec_rate),
+                          g_sea_level_hpa);
+        }
+
+        if (snapshot.valid)
+        {
+            Serial.printf("[SENSOR] data T=%.2f C H=%.2f %% P=%.2f hPa Alt=%.1f m Gas=%.2f kOhm IAQ=%.1f acc=%u\n",
+                          snapshot.temperature_c,
+                          snapshot.humidity_pct,
+                          snapshot.pressure_hpa,
+                          snapshot.altitude_m,
+                          snapshot.gas_resistance_kohm,
+                          snapshot.iaq,
+                          snapshot.iaq_accuracy);
+        }
+    }
+
+    void serial_help()
+    {
+        Serial.println("[CMD] Commands:");
+        Serial.println("[CMD] help                     -> show this help");
+        Serial.println("[CMD] status                   -> current sensor status and data");
+        Serial.println("[CMD] get slp                  -> show sea level pressure (hPa)");
+        Serial.println("[CMD] set slp <hPa>            -> set sea level pressure (850..1100)");
+        Serial.println("[CMD] set alt <meter>          -> compute SLP from current pressure + known altitude");
+        Serial.println("[CMD] reset slp                -> restore default SLP 1013.25 hPa");
+        Serial.println("[CMD] sensor reinit            -> force BME680/BSEC reinit");
+        Serial.println("[CMD] i2c scan                 -> run quick main/alt I2C scan now");
+        Serial.println("[CMD] debug detail on|off      -> force detailed debug output");
+    }
+
+    void serial_i2c_scan_now()
+    {
+        char main_detected[256] = {0};
+        uint8_t main_found_count = 0;
+        scan_i2c_bus(Wire, main_detected, sizeof(main_detected), &main_found_count);
+        Serial.printf("[CMD] i2c main(%d/%d): %s\n",
+                      PIN_I2C_SDA,
+                      PIN_I2C_SCL,
+                      main_found_count > 0 ? main_detected : "none");
+
+        if (g_alt_bus_enabled)
+        {
+            char alt_detected[256] = {0};
+            uint8_t alt_found_count = 0;
+            scan_i2c_bus(g_alt_wire, alt_detected, sizeof(alt_detected), &alt_found_count);
+            Serial.printf("[CMD] i2c alt(%d/%d): %s\n",
+                          PIN_I2C_ALT_SDA,
+                          PIN_I2C_ALT_SCL,
+                          alt_found_count > 0 ? alt_detected : "none");
+        }
+    }
+
+    void trim_inplace(char *s)
+    {
+        if (s == nullptr)
+        {
+            return;
+        }
+
+        size_t start = 0;
+        while (s[start] != '\0' && isspace(static_cast<unsigned char>(s[start])))
+        {
+            ++start;
+        }
+
+        if (start > 0)
+        {
+            memmove(s, s + start, strlen(s + start) + 1U);
+        }
+
+        size_t len = strlen(s);
+        while (len > 0 && isspace(static_cast<unsigned char>(s[len - 1U])))
+        {
+            s[len - 1U] = '\0';
+            --len;
+        }
+    }
+
+    void to_lower_ascii(char *s)
+    {
+        if (s == nullptr)
+        {
+            return;
+        }
+
+        for (; *s != '\0'; ++s)
+        {
+            *s = static_cast<char>(tolower(static_cast<unsigned char>(*s)));
+        }
+    }
+
+    void handle_serial_command(char *line)
+    {
+        if (line == nullptr)
+        {
+            return;
+        }
+
+        trim_inplace(line);
+        if (line[0] == '\0')
+        {
+            return;
+        }
+
+        char original[96] = {0};
+        strncpy(original, line, sizeof(original) - 1U);
+
+        char lower[96] = {0};
+        strncpy(lower, line, sizeof(lower) - 1U);
+        to_lower_ascii(lower);
+
+        char *argv[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+        uint8_t argc = 0;
+        char *token = strtok(lower, " \t");
+        while (token != nullptr && argc < 5)
+        {
+            argv[argc++] = token;
+            token = strtok(nullptr, " \t");
+        }
+
+        if (argc == 0)
+        {
+            return;
+        }
+
+        if (strcmp(argv[0], "help") == 0)
+        {
+            serial_help();
+            return;
+        }
+
+        if (strcmp(argv[0], "status") == 0)
+        {
+            const SensorData snapshot = sensors_get_data();
+            print_status_line(snapshot);
+            return;
+        }
+
+        if (argc >= 2 && strcmp(argv[0], "get") == 0 && strcmp(argv[1], "slp") == 0)
+        {
+            Serial.printf("[CMD] sea-level pressure: %.2f hPa\n", g_sea_level_hpa);
+            return;
+        }
+
+        if (argc >= 3 && strcmp(argv[0], "set") == 0 && strcmp(argv[1], "slp") == 0)
+        {
+            const float slp = static_cast<float>(atof(argv[2]));
+            if (!set_sea_level_hpa(slp, true))
+            {
+                Serial.printf("[CMD] invalid slp %.2f. valid range: %.1f..%.1f hPa\n", slp, SEA_LEVEL_MIN_HPA, SEA_LEVEL_MAX_HPA);
+                return;
+            }
+            refresh_altitude_from_snapshot();
+            Serial.printf("[CMD] sea-level pressure set to %.2f hPa\n", g_sea_level_hpa);
+            return;
+        }
+
+        if (argc >= 3 && strcmp(argv[0], "set") == 0 && strcmp(argv[1], "alt") == 0)
+        {
+            const float known_alt_m = static_cast<float>(atof(argv[2]));
+            if (!isfinite(known_alt_m) || known_alt_m < KNOWN_ALT_MIN_M || known_alt_m > KNOWN_ALT_MAX_M)
+            {
+                Serial.printf("[CMD] invalid altitude %.2f m. valid range: %.1f..%.1f m\n", known_alt_m, KNOWN_ALT_MIN_M, KNOWN_ALT_MAX_M);
+                return;
+            }
+
+            const SensorData snapshot = sensors_get_data();
+            if (!snapshot.valid || !isfinite(snapshot.pressure_hpa) || snapshot.pressure_hpa <= 0.0f)
+            {
+                Serial.println("[CMD] cannot calibrate altitude: pressure data not ready.");
+                return;
+            }
+
+            const float base = 1.0f - (known_alt_m / 44330.0f);
+            if (base <= 0.0f)
+            {
+                Serial.println("[CMD] invalid altitude for calibration formula.");
+                return;
+            }
+
+            const float computed_slp = snapshot.pressure_hpa / powf(base, (1.0f / 0.1903f));
+            if (!set_sea_level_hpa(computed_slp, true))
+            {
+                Serial.printf("[CMD] computed SLP %.2f out of range. calibration canceled.\n", computed_slp);
+                return;
+            }
+
+            refresh_altitude_from_snapshot();
+
+            Serial.printf("[CMD] altitude calibrated: alt=%.2f m pressure=%.2f hPa => slp=%.2f hPa\n",
+                          known_alt_m,
+                          snapshot.pressure_hpa,
+                          g_sea_level_hpa);
+            return;
+        }
+
+        if (argc >= 2 && strcmp(argv[0], "reset") == 0 && strcmp(argv[1], "slp") == 0)
+        {
+            set_sea_level_hpa(SEA_LEVEL_DEFAULT_HPA, true);
+            refresh_altitude_from_snapshot();
+            Serial.printf("[CMD] sea-level pressure reset to %.2f hPa\n", g_sea_level_hpa);
+            return;
+        }
+
+        if (argc >= 2 && strcmp(argv[0], "sensor") == 0 && strcmp(argv[1], "reinit") == 0)
+        {
+            g_sensor_healthy = false;
+            Serial.println("[CMD] sensor reinit scheduled.");
+            return;
+        }
+
+        if (argc >= 2 && strcmp(argv[0], "i2c") == 0 && strcmp(argv[1], "scan") == 0)
+        {
+            serial_i2c_scan_now();
+            return;
+        }
+
+        if (argc >= 3 && strcmp(argv[0], "debug") == 0 && strcmp(argv[1], "detail") == 0)
+        {
+            if (strcmp(argv[2], "on") == 0)
+            {
+                g_force_detailed_logs = true;
+                Serial.println("[CMD] detailed debug ON.");
+                return;
+            }
+            if (strcmp(argv[2], "off") == 0)
+            {
+                g_force_detailed_logs = false;
+                Serial.println("[CMD] detailed debug OFF.");
+                return;
+            }
+        }
+
+        Serial.printf("[CMD] unknown command: %s\n", original);
+        Serial.println("[CMD] type 'help' for available commands.");
     }
 
 } // namespace
@@ -339,10 +678,14 @@ bool sensors_init()
     g_bme_on_alt_bus = false;
     g_alt_bus_enabled = (PIN_I2C_ALT_SDA != PIN_I2C_SDA) || (PIN_I2C_ALT_SCL != PIN_I2C_SCL);
 
+    load_runtime_config();
+
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+    Wire.setTimeOut(50);
     if (g_alt_bus_enabled)
     {
         g_alt_wire.begin(PIN_I2C_ALT_SDA, PIN_I2C_ALT_SCL);
+        g_alt_wire.setTimeOut(50);
     }
 
     BmeCandidate candidates[4]{};
@@ -366,7 +709,10 @@ bool sensors_init()
 
     if (candidate_count == 0)
     {
-        Serial.println("[BME680] init fail: sensor not found on main or alt I2C bus.");
+        if (g_force_detailed_logs)
+        {
+            Serial.println("[BME680] init fail: sensor not found on main or alt I2C bus.");
+        }
         return false;
     }
 
@@ -377,9 +723,12 @@ bool sensors_init()
         g_bme_addr = candidates[i].addr;
         g_bme_on_alt_bus = candidates[i].on_alt_bus;
 
-        Serial.printf("[BME680] init try bus=%s addr=0x%02X\n",
-                      g_bme_on_alt_bus ? "ALT(43/44)" : "MAIN(18/17)",
-                      g_bme_addr);
+        if (g_force_detailed_logs)
+        {
+            Serial.printf("[BME680] init try bus=%s addr=0x%02X\n",
+                          g_bme_on_alt_bus ? "ALT(43/44)" : "MAIN(18/17)",
+                          g_bme_addr);
+        }
 
         begin_ok = g_bsec.begin(g_bme_addr, *g_bme_wire);
         if (begin_ok)
@@ -391,15 +740,21 @@ bool sensors_init()
     g_sensor_healthy = begin_ok;
     if (!g_sensor_healthy)
     {
-        Serial.printf("[BME680] init fail: BSEC begin failed on all candidates (bsec_status=%d sensor_status=%d).\n",
-                      static_cast<int>(g_bsec.status),
-                      static_cast<int>(g_bsec.sensor.status));
+        if (g_force_detailed_logs)
+        {
+            Serial.printf("[BME680] init fail: BSEC begin failed on all candidates (bsec_status=%d sensor_status=%d).\n",
+                          static_cast<int>(g_bsec.status),
+                          static_cast<int>(g_bsec.sensor.status));
+        }
         return false;
     }
 
-    Serial.printf("[BME680] init selected bus=%s addr=0x%02X\n",
-                  g_bme_on_alt_bus ? "ALT(43/44)" : "MAIN(18/17)",
-                  g_bme_addr);
+    if (g_force_detailed_logs)
+    {
+        Serial.printf("[BME680] init selected bus=%s addr=0x%02X\n",
+                      g_bme_on_alt_bus ? "ALT(43/44)" : "MAIN(18/17)",
+                      g_bme_addr);
+    }
 
     bsec_virtual_sensor_t sensor_list[] = {
         BSEC_OUTPUT_IAQ,
@@ -432,23 +787,32 @@ bool sensors_init()
         {
             g_active_bsec_rate = candidate.rate;
             subscription_ok = true;
-            Serial.printf("[BME680] subscription mode=%s rate=%.5f OK\n", candidate.name, candidate.rate);
+            if (g_force_detailed_logs)
+            {
+                Serial.printf("[BME680] subscription mode=%s rate=%.5f OK\n", candidate.name, candidate.rate);
+            }
             break;
         }
 
-        Serial.printf("[BME680] subscription mode=%s rate=%.5f fail (bsec_status=%d sensor_status=%d)\n",
-                      candidate.name,
-                      candidate.rate,
-                      static_cast<int>(g_bsec.status),
-                      static_cast<int>(g_bsec.sensor.status));
+        if (g_force_detailed_logs)
+        {
+            Serial.printf("[BME680] subscription mode=%s rate=%.5f fail (bsec_status=%d sensor_status=%d)\n",
+                          candidate.name,
+                          candidate.rate,
+                          static_cast<int>(g_bsec.status),
+                          static_cast<int>(g_bsec.sensor.status));
+        }
     }
 
     g_sensor_healthy = subscription_ok;
     if (!g_sensor_healthy)
     {
-        Serial.printf("[BME680] init fail: updateSubscription failed (bsec_status=%d sensor_status=%d).\n",
-                      static_cast<int>(g_bsec.status),
-                      static_cast<int>(g_bsec.sensor.status));
+        if (g_force_detailed_logs)
+        {
+            Serial.printf("[BME680] init fail: updateSubscription failed (bsec_status=%d sensor_status=%d).\n",
+                          static_cast<int>(g_bsec.status),
+                          static_cast<int>(g_bsec.sensor.status));
+        }
         return false;
     }
 
@@ -505,6 +869,11 @@ SensorData sensors_get_data()
 
 void sensors_debug_tick()
 {
+    if (!g_force_detailed_logs)
+    {
+        return;
+    }
+
     const uint32_t now_ms = millis();
     if (now_ms - g_last_debug_ms < I2C_DEBUG_INTERVAL_MS)
     {
@@ -516,7 +885,7 @@ void sensors_debug_tick()
     const uint32_t sample_age_ms = snapshot.valid ? (now_ms - snapshot.last_update_ms) : UINT32_MAX;
     const bool sample_stale = snapshot.valid && (sample_age_ms > SENSOR_STALE_REINIT_MS);
 
-    if (g_sensor_healthy && snapshot.valid && !sample_stale)
+    if (g_sensor_healthy && snapshot.valid && !sample_stale && !g_force_detailed_logs)
     {
         Serial.printf("[SENSOR] OK bus=%s addr=0x%02X mode=%s age=%lu ms | T=%.2f C H=%.2f %% P=%.2f hPa Alt=%.1f m Gas=%.2f kOhm IAQ=%.1f acc=%u\n",
                       g_bme_on_alt_bus ? "ALT(43/44)" : "MAIN(18/17)",
@@ -666,7 +1035,10 @@ void sensorTask(void * /*parameter*/)
             if ((last_retry_ms == 0U) || (now_ms - last_retry_ms >= SENSOR_INIT_RETRY_MS))
             {
                 last_retry_ms = now_ms;
-                Serial.println("[BME680] retry init...");
+                if (g_force_detailed_logs)
+                {
+                    Serial.println("[BME680] retry init...");
+                }
                 sensors_init();
             }
 
@@ -681,26 +1053,35 @@ void sensorTask(void * /*parameter*/)
 
             if (!run_ok)
             {
-                Serial.printf("[BME680] run fail: bsec_status=%d sensor_status=%d -> reinit scheduled\n",
-                              static_cast<int>(g_bsec.status),
-                              static_cast<int>(g_bsec.sensor.status));
+                if (g_force_detailed_logs)
+                {
+                    Serial.printf("[BME680] run fail: bsec_status=%d sensor_status=%d -> reinit scheduled\n",
+                                  static_cast<int>(g_bsec.status),
+                                  static_cast<int>(g_bsec.sensor.status));
+                }
                 g_sensor_healthy = false;
                 vTaskDelay(wait_ticks);
                 continue;
             }
 
-            // Publish as soon as BSEC provides a fresh sample (including first sample).
+            // Publish latest sample with configured update interval.
             if (g_live.has_new_sample)
             {
-                publish_snapshot(now_ms);
-                g_last_publish_ms = now_ms;
+                if ((g_last_publish_ms == 0U) || (now_ms - g_last_publish_ms >= SENSOR_REFRESH))
+                {
+                    publish_snapshot(now_ms);
+                    g_last_publish_ms = now_ms;
+                }
             }
 
             if ((g_last_sample_ms != 0U) && (now_ms - g_last_sample_ms > SENSOR_STALE_REINIT_MS))
             {
-                Serial.printf("[BME680] stale sample (%lu ms > %lu ms), reinit scheduled\n",
-                              static_cast<unsigned long>(now_ms - g_last_sample_ms),
-                              static_cast<unsigned long>(SENSOR_STALE_REINIT_MS));
+                if (g_force_detailed_logs)
+                {
+                    Serial.printf("[BME680] stale sample (%lu ms > %lu ms), reinit scheduled\n",
+                                  static_cast<unsigned long>(now_ms - g_last_sample_ms),
+                                  static_cast<unsigned long>(SENSOR_STALE_REINIT_MS));
+                }
                 g_sensor_healthy = false;
                 vTaskDelay(wait_ticks);
                 continue;
@@ -714,5 +1095,65 @@ void sensorTask(void * /*parameter*/)
         }
 
         vTaskDelay(wait_ticks);
+    }
+}
+
+void sensors_serial_tick()
+{
+    static char line[96] = {0};
+    static size_t len = 0;
+    static uint32_t last_rx_ms = 0;
+
+    while (Serial.available() > 0)
+    {
+        const int raw = Serial.read();
+        if (raw < 0)
+        {
+            break;
+        }
+
+        const char ch = static_cast<char>(raw);
+        if (ch == '\r' || ch == '\n')
+        {
+            if (len > 0)
+            {
+                line[len] = '\0';
+                handle_serial_command(line);
+                len = 0;
+                line[0] = '\0';
+            }
+            continue;
+        }
+
+        if (!isprint(static_cast<unsigned char>(ch)))
+        {
+            continue;
+        }
+
+        if (len < (sizeof(line) - 1U))
+        {
+            line[len++] = ch;
+            last_rx_ms = millis();
+        }
+        else
+        {
+            len = 0;
+            line[0] = '\0';
+            Serial.println("[CMD] input too long, line dropped.");
+        }
+    }
+
+    // Some serial terminals send commands without CR/LF.
+    if (len > 0)
+    {
+        const uint32_t now_ms = millis();
+        if ((last_rx_ms != 0U) && (now_ms - last_rx_ms >= 600U))
+        {
+            line[len] = '\0';
+            handle_serial_command(line);
+            len = 0;
+            line[0] = '\0';
+            last_rx_ms = 0;
+        }
     }
 }
