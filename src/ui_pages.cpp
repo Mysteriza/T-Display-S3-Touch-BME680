@@ -108,6 +108,7 @@ namespace
     constexpr uint8_t BATTERY_UP_MIN_STEP = 2;
     constexpr uint32_t UI_TASK_SLEEP_DELAY_MS = 120UL;
     constexpr uint32_t UI_BG_REFRESH_MS = 1000UL;
+    constexpr uint32_t COLOR_BOOT_CHECKING = 0xFFD60A;
 
     uint32_t g_last_ui_refresh_ms = 0;
     uint32_t g_last_cpu_refresh_ms = 0;
@@ -494,15 +495,18 @@ namespace
         return card;
     }
 
-    void set_boot_line(lv_obj_t *label, const char *name, bool ok)
+    void set_boot_line(lv_obj_t *label, const char *name, bool done, bool ok)
     {
+        const uint32_t status_color = done ? (ok ? COLOR_STATUS : COLOR_FAIL) : COLOR_BOOT_CHECKING;
+        const char *status_text = done ? (ok ? "OK" : "Fail") : "Checking";
+
         char line[96] = {0};
         snprintf(line,
                  sizeof(line),
                  "%s #%.6X [%s]#",
                  name,
-                 ok ? COLOR_STATUS : COLOR_FAIL,
-                 ok ? "OK" : "FAIL");
+                 status_color,
+                 status_text);
         lv_label_set_recolor(label, true);
         lv_label_set_text(label, line);
     }
@@ -740,11 +744,8 @@ namespace
         const SensorData data = sensors_get_data();
         char text[64] = {0};
 
-        const bool data_fresh = data.valid &&
-                                (now_ms >= data.last_update_ms) &&
-                                ((now_ms - data.last_update_ms) < SENSOR_REFRESH);
-        const bool sensor_active = sensors_is_healthy() && data_fresh;
-        const lv_color_t env_color = sensor_active ? lv_color_hex(COLOR_VALUE) : lv_color_hex(COLOR_FAIL);
+        const bool sensor_connected_now = sensors_is_connected_realtime();
+        const lv_color_t env_color = sensor_connected_now ? lv_color_hex(COLOR_VALUE) : lv_color_hex(COLOR_FAIL);
         for (uint8_t i = 0; i < 3; ++i)
         {
             if (g_env_headers[i] != nullptr)
@@ -963,9 +964,9 @@ void ui_boot_diag_update(const BootDiagStatus &status)
         return;
     }
 
-    set_boot_line(g_boot_lcd, "LCD Initializing...", status.lcd_ok);
-    set_boot_line(g_boot_touch, "Touch Controller...", status.touch_ok);
-    set_boot_line(g_boot_sensor, "BME680 Sensor...", status.sensor_ok);
+    set_boot_line(g_boot_lcd, "LCD Initializing...", status.lcd_done, status.lcd_ok);
+    set_boot_line(g_boot_touch, "Touch Controller...", status.touch_done, status.touch_ok);
+    set_boot_line(g_boot_sensor, "BME680 Sensor...", status.sensor_done, status.sensor_ok);
 
     lv_tick_inc(20);
     lv_timer_handler();

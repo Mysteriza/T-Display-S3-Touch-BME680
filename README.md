@@ -22,9 +22,11 @@ This document uses English only and documents direct GPIO I2C wiring as the prim
 - Dynamic CPU frequency scaling: high frequency while display is on, reduced frequency while display is off.
 - Touch controller enters sleep when display is off and wakes when GPIO14 wake button turns display on.
 - Lower UI task activity while display is off to reduce power without stopping sensor updates.
+- Timeout wake button is handled on press edge only (active-low) with debounce to avoid false wake/reset events.
 - Header connectivity indicator:
-  - Env_monitor text is cyan when sensor is healthy and data is fresh.
-  - Env_monitor text turns red when sensor is disconnected/not healthy or no fresh update arrives within the refresh interval.
+  - Env_monitor text is driven by realtime physical BME68x link probing (chip-ID verified).
+  - Disconnect/reconnect is debounced in the sensor task and reflected on UI in about 1 second.
+  - Short transient glitches are filtered to avoid false color flicker.
 
 ## Required Hardware
 
@@ -139,7 +141,7 @@ Command behavior notes:
 
 ## Runtime Behavior
 
-- Boot self-check displays LCD/touch/sensor status as OK/FAIL.
+- Boot self-check starts with Checking (yellow), then updates each item to OK (green) or Fail (red).
 - UI starts on page 1 and supports three swipe pages.
 - Backlight timeout default: 15000 ms.
 - When display is ON: touch works for swipe navigation and keeps activity alive.
@@ -148,6 +150,7 @@ Command behavior notes:
 - When GPIO14 wakes the display, the touch controller is reactivated.
 - Sensor task runs separately (FreeRTOS) and retries initialization on failure.
 - If sensor data becomes stale for too long, firmware schedules automatic sensor re-initialization.
+- Transient single-cycle BSEC run failures are filtered before forcing re-initialization.
 - UI loop is throttled while display is off, while sensor sampling continues in the background.
 
 ## Main Configuration

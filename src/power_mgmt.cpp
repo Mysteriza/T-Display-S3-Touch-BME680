@@ -40,6 +40,11 @@ static void IRAM_ATTR button_wake_isr()
         return;
     }
 
+    if (gpio_get_level(static_cast<gpio_num_t>(PIN_BUTTON_WAKE)) != 0)
+    {
+        return;
+    }
+
     g_last_button_isr_ms = now_ms;
     wake_system_reset();
 }
@@ -56,8 +61,8 @@ void power_mgmt_init()
 
     apply_cpu_profile(g_display_awake);
 
-    // CHANGE covers both rising/falling edges as requested.
-    attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_WAKE), button_wake_isr, CHANGE);
+    // Wake on active-low button press only to avoid edge-noise extending timeout.
+    attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_WAKE), button_wake_isr, FALLING);
 }
 
 void power_mgmt_loop()

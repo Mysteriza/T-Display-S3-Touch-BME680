@@ -4,8 +4,11 @@
 
 struct BootDiagStatus
 {
+    bool lcd_done;
     bool lcd_ok;
+    bool touch_done;
     bool touch_ok;
+    bool sensor_done;
     bool sensor_ok;
 };
 

@@ -12,13 +12,16 @@ void setup()
 
   BootDiagStatus boot_status{};
 
+  boot_status.lcd_done = true;
   boot_status.lcd_ok = ui_init_display();
   ui_boot_diag_begin();
   ui_boot_diag_update(boot_status);
 
+  boot_status.touch_done = true;
   boot_status.touch_ok = ui_init_touch();
   ui_boot_diag_update(boot_status);
 
+  boot_status.sensor_done = true;
   boot_status.sensor_ok = sensors_init();
   ui_boot_diag_update(boot_status);
   ui_boot_diag_finish(3000);

@@ -17,6 +17,7 @@ struct SensorData
 
 bool sensors_init();
 bool sensors_is_healthy();
+bool sensors_is_connected_realtime();
 SensorData sensors_get_data();
 void sensors_debug_tick();
 void sensors_serial_tick();

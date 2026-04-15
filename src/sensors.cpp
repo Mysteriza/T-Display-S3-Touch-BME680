@@ -20,7 +20,8 @@ namespace
     Preferences g_cfg_nvs;
     SemaphoreHandle_t g_sensor_mutex = nullptr;
     SensorData g_sensor_data{};
-    bool g_sensor_healthy = false;
+    volatile bool g_sensor_healthy = false;
+    volatile bool g_sensor_connected_realtime = false;
     bool g_alt_bus_enabled = false;
     bool g_force_detailed_logs = false;
     bool g_cfg_ready = false;
@@ -35,10 +36,17 @@ namespace
     uint32_t g_last_sample_ms = 0;
     uint32_t g_last_state_save_ms = 0;
     uint32_t g_last_debug_ms = 0;
+    uint32_t g_last_link_probe_ms = 0;
+    uint8_t g_link_ok_streak = 0;
+    uint8_t g_link_fail_streak = 0;
 
     constexpr uint32_t I2C_DEBUG_INTERVAL_MS = 10000UL;
-    constexpr uint32_t SENSOR_INIT_RETRY_MS = 3000UL;
+    constexpr uint32_t SENSOR_INIT_RETRY_MS = 1000UL;
     constexpr uint32_t SENSOR_STALE_REINIT_MS = SENSOR_REFRESH + 5000UL;
+    constexpr uint8_t SENSOR_RUN_FAIL_LIMIT = 2;
+    constexpr uint32_t SENSOR_LINK_PROBE_INTERVAL_MS = 500UL;
+    constexpr uint8_t SENSOR_LINK_OK_LIMIT = 2;
+    constexpr uint8_t SENSOR_LINK_FAIL_LIMIT = 2;
     constexpr uint8_t BME68X_CHIP_ID_REG = 0xD0;
     constexpr uint8_t BME68X_CHIP_ID_VALUE = 0x61;
     constexpr float SEA_LEVEL_DEFAULT_HPA = 1013.25f;
@@ -183,6 +191,66 @@ namespace
         }
 
         return id == BME68X_CHIP_ID_VALUE;
+    }
+
+    bool any_bme68x_present_on_bus(TwoWire &bus)
+    {
+        return is_bme68x_chip(bus, 0x76) || is_bme68x_chip(bus, 0x77);
+    }
+
+    bool any_bme68x_present()
+    {
+        if (any_bme68x_present_on_bus(Wire))
+        {
+            return true;
+        }
+
+        if (g_alt_bus_enabled && any_bme68x_present_on_bus(g_alt_wire))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    void update_realtime_link_status(bool present_now)
+    {
+        if (present_now)
+        {
+            g_link_fail_streak = 0;
+            if (g_link_ok_streak < 255U)
+            {
+                ++g_link_ok_streak;
+            }
+
+            if (g_link_ok_streak >= SENSOR_LINK_OK_LIMIT)
+            {
+                g_sensor_connected_realtime = true;
+            }
+            return;
+        }
+
+        g_link_ok_streak = 0;
+        if (g_link_fail_streak < 255U)
+        {
+            ++g_link_fail_streak;
+        }
+
+        if (g_link_fail_streak >= SENSOR_LINK_FAIL_LIMIT)
+        {
+            g_sensor_connected_realtime = false;
+        }
+    }
+
+    void probe_realtime_link_if_due(uint32_t now_ms)
+    {
+        if ((g_last_link_probe_ms != 0U) && (now_ms - g_last_link_probe_ms < SENSOR_LINK_PROBE_INTERVAL_MS))
+        {
+            return;
+        }
+
+        g_last_link_probe_ms = now_ms;
+        update_realtime_link_status(any_bme68x_present());
     }
 
     struct BmeCandidate
@@ -673,6 +741,10 @@ bool sensors_init()
     seed_default_snapshot();
 
     g_sensor_healthy = false;
+    g_sensor_connected_realtime = false;
+    g_link_ok_streak = 0;
+    g_link_fail_streak = 0;
+    g_last_link_probe_ms = 0;
     g_bme_wire = &Wire;
     g_bme_addr = BME680_I2C_ADDR;
     g_bme_on_alt_bus = false;
@@ -738,6 +810,7 @@ bool sensors_init()
     }
 
     g_sensor_healthy = begin_ok;
+    g_sensor_connected_realtime = begin_ok;
     if (!g_sensor_healthy)
     {
         if (g_force_detailed_logs)
@@ -805,6 +878,7 @@ bool sensors_init()
     }
 
     g_sensor_healthy = subscription_ok;
+    g_sensor_connected_realtime = subscription_ok;
     if (!g_sensor_healthy)
     {
         if (g_force_detailed_logs)
@@ -848,6 +922,11 @@ bool sensors_init()
 bool sensors_is_healthy()
 {
     return g_sensor_healthy;
+}
+
+bool sensors_is_connected_realtime()
+{
+    return g_sensor_connected_realtime;
 }
 
 SensorData sensors_get_data()
@@ -1026,12 +1105,16 @@ void sensorTask(void * /*parameter*/)
 {
     const TickType_t wait_ticks = pdMS_TO_TICKS(200);
     uint32_t last_retry_ms = 0;
+    uint8_t run_fail_streak = 0;
 
     for (;;)
     {
+        const uint32_t now_ms = millis();
+        probe_realtime_link_if_due(now_ms);
+
         if (!g_sensor_healthy)
         {
-            const uint32_t now_ms = millis();
+            run_fail_streak = 0;
             if ((last_retry_ms == 0U) || (now_ms - last_retry_ms >= SENSOR_INIT_RETRY_MS))
             {
                 last_retry_ms = now_ms;
@@ -1048,21 +1131,51 @@ void sensorTask(void * /*parameter*/)
 
         if (g_sensor_healthy)
         {
+            if (g_link_fail_streak >= SENSOR_LINK_FAIL_LIMIT)
+            {
+                g_sensor_connected_realtime = false;
+                g_sensor_healthy = false;
+                run_fail_streak = 0;
+                vTaskDelay(wait_ticks);
+                continue;
+            }
+
             const bool run_ok = g_bsec.run();
-            const uint32_t now_ms = millis();
 
             if (!run_ok)
             {
+                if (run_fail_streak < 255U)
+                {
+                    ++run_fail_streak;
+                }
+
                 if (g_force_detailed_logs)
                 {
-                    Serial.printf("[BME680] run fail: bsec_status=%d sensor_status=%d -> reinit scheduled\n",
+                    Serial.printf("[BME680] run fail(%u/%u): bsec_status=%d sensor_status=%d\n",
+                                  static_cast<unsigned>(run_fail_streak),
+                                  static_cast<unsigned>(SENSOR_RUN_FAIL_LIMIT),
                                   static_cast<int>(g_bsec.status),
                                   static_cast<int>(g_bsec.sensor.status));
                 }
+
+                if (run_fail_streak < SENSOR_RUN_FAIL_LIMIT)
+                {
+                    vTaskDelay(wait_ticks);
+                    continue;
+                }
+
+                if (g_force_detailed_logs)
+                {
+                    Serial.println("[BME680] run fail limit reached -> reinit scheduled");
+                }
+
+                run_fail_streak = 0;
                 g_sensor_healthy = false;
                 vTaskDelay(wait_ticks);
                 continue;
             }
+
+            run_fail_streak = 0;
 
             // Publish latest sample with configured update interval.
             if (g_live.has_new_sample)
@@ -1076,6 +1189,7 @@ void sensorTask(void * /*parameter*/)
 
             if ((g_last_sample_ms != 0U) && (now_ms - g_last_sample_ms > SENSOR_STALE_REINIT_MS))
             {
+                run_fail_streak = 0;
                 if (g_force_detailed_logs)
                 {
                     Serial.printf("[BME680] stale sample (%lu ms > %lu ms), reinit scheduled\n",
