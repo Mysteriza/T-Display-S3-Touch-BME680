@@ -93,6 +93,22 @@ namespace
     lv_obj_t *g_battery_labels[3] = {nullptr, nullptr, nullptr};
     lv_obj_t *g_env_headers[3] = {nullptr, nullptr, nullptr};
 
+    uint32_t g_bat_filtered_mv = 0;
+    bool g_bat_filtered_ready = false;
+    int16_t g_bat_display_pct = -1;
+    uint8_t g_bat_down_confirm = 0;
+    uint8_t g_bat_up_confirm = 0;
+    uint32_t g_last_bg_ui_refresh_ms = 0;
+    bool g_touch_hw_awake = true;
+    bool g_prev_display_awake = true;
+
+    constexpr uint8_t BATTERY_ADC_AVG_SAMPLES = 8;
+    constexpr uint8_t BATTERY_DOWN_CONFIRM_CYCLES = 2;
+    constexpr uint8_t BATTERY_UP_CONFIRM_CYCLES = 4;
+    constexpr uint8_t BATTERY_UP_MIN_STEP = 2;
+    constexpr uint32_t UI_TASK_SLEEP_DELAY_MS = 120UL;
+    constexpr uint32_t UI_BG_REFRESH_MS = 1000UL;
+
     uint32_t g_last_ui_refresh_ms = 0;
     uint32_t g_last_cpu_refresh_ms = 0;
     uint32_t g_last_sys_info_refresh_ms = 0;
@@ -274,14 +290,31 @@ namespace
             g_bat_adc_ready = true;
         }
 
-        const uint32_t raw = static_cast<uint32_t>(analogRead(PIN_BAT_VOLT));
-        const uint32_t mv = esp_adc_cal_raw_to_voltage(raw, &g_bat_adc_chars) * 2U;
-        const bool present = mv <= BATTERY_ABSENT_MV;
+        uint32_t raw_sum = 0;
+        for (uint8_t i = 0; i < BATTERY_ADC_AVG_SAMPLES; ++i)
+        {
+            raw_sum += static_cast<uint32_t>(analogRead(PIN_BAT_VOLT));
+        }
+
+        const uint32_t raw_avg = raw_sum / BATTERY_ADC_AVG_SAMPLES;
+        const uint32_t mv = esp_adc_cal_raw_to_voltage(raw_avg, &g_bat_adc_chars) * 2U;
+
+        if (!g_bat_filtered_ready)
+        {
+            g_bat_filtered_mv = mv;
+            g_bat_filtered_ready = true;
+        }
+        else
+        {
+            g_bat_filtered_mv = (g_bat_filtered_mv * 3U + mv) / 4U;
+        }
+
+        const bool present = g_bat_filtered_mv <= BATTERY_ABSENT_MV;
         if (has_battery != nullptr)
         {
             *has_battery = present;
         }
-        return mv;
+        return g_bat_filtered_mv;
     }
 
     void create_battery_label(lv_obj_t *parent, uint8_t page_idx)
@@ -302,9 +335,52 @@ namespace
     {
         bool has_battery = false;
         const uint32_t bat_mv = read_battery_mv(&has_battery);
-        const uint8_t bat_pct = battery_percent_from_mv(bat_mv);
         const bool usb_power = !has_battery;
-        const uint8_t shown_pct = usb_power ? 100U : bat_pct;
+        const uint8_t bat_pct = battery_percent_from_mv(bat_mv);
+
+        uint8_t shown_pct = 100U;
+        if (usb_power)
+        {
+            g_bat_display_pct = -1;
+            g_bat_down_confirm = 0;
+            g_bat_up_confirm = 0;
+        }
+        else
+        {
+            if (g_bat_display_pct < 0)
+            {
+                g_bat_display_pct = static_cast<int16_t>(bat_pct);
+            }
+            else if (bat_pct < static_cast<uint8_t>(g_bat_display_pct))
+            {
+                ++g_bat_down_confirm;
+                g_bat_up_confirm = 0;
+                if (g_bat_down_confirm >= BATTERY_DOWN_CONFIRM_CYCLES)
+                {
+                    g_bat_display_pct = static_cast<int16_t>(bat_pct);
+                    g_bat_down_confirm = 0;
+                }
+            }
+            else if (bat_pct > static_cast<uint8_t>(g_bat_display_pct))
+            {
+                ++g_bat_up_confirm;
+                g_bat_down_confirm = 0;
+                if ((bat_pct >= static_cast<uint8_t>(g_bat_display_pct + BATTERY_UP_MIN_STEP)) &&
+                    (g_bat_up_confirm >= BATTERY_UP_CONFIRM_CYCLES))
+                {
+                    g_bat_display_pct = static_cast<int16_t>(bat_pct);
+                    g_bat_up_confirm = 0;
+                }
+            }
+            else
+            {
+                g_bat_down_confirm = 0;
+                g_bat_up_confirm = 0;
+            }
+
+            shown_pct = static_cast<uint8_t>(clamp_i32(g_bat_display_pct, 0, 100));
+        }
+
         const lv_color_t text_color = battery_color_from_percent(shown_pct, usb_power);
 
         for (uint8_t i = 0; i < 3; ++i)
@@ -327,8 +403,40 @@ namespace
         return Wire.endTransmission() == 0;
     }
 
+    void sync_touch_power_state(bool display_awake)
+    {
+        if (!g_touch_ready)
+        {
+            return;
+        }
+
+        if (display_awake)
+        {
+            if (!g_touch_hw_awake)
+            {
+                g_touch.wakeup();
+                delay(3);
+                g_touch_hw_awake = true;
+            }
+        }
+        else
+        {
+            if (g_touch_hw_awake)
+            {
+                g_touch.sleep();
+                g_touch_hw_awake = false;
+            }
+        }
+    }
+
     void touch_read_cb(lv_indev_drv_t * /*drv*/, lv_indev_data_t *data)
     {
+        if (!power_is_display_awake() || !g_touch_hw_awake)
+        {
+            data->state = LV_INDEV_STATE_RELEASED;
+            return;
+        }
+
         if (g_touch_ready)
         {
             const TouchPoints &touch_points = g_touch.getTouchPoints();
@@ -807,6 +915,10 @@ bool ui_init_touch()
     g_touch.disableAutoSleep();
     g_touch.setCenterButtonCoordinate(85, 360);
 
+    g_touch_hw_awake = true;
+    g_prev_display_awake = power_is_display_awake();
+    sync_touch_power_state(g_prev_display_awake);
+
     wake_system_reset();
     return true;
 }
@@ -915,10 +1027,36 @@ void uiTask(void * /*parameter*/)
     {
         if (g_lvgl_ready)
         {
-            lv_tick_inc(UI_TASK_DELAY_MS);
+            const bool display_awake = power_is_display_awake();
+            const uint32_t task_delay_ms = display_awake ? UI_TASK_DELAY_MS : UI_TASK_SLEEP_DELAY_MS;
+
+            if (display_awake != g_prev_display_awake)
+            {
+                sync_touch_power_state(display_awake);
+                g_prev_display_awake = display_awake;
+            }
+
+            lv_tick_inc(task_delay_ms);
             lv_timer_handler();
-            update_page_values();
+
+            if (display_awake)
+            {
+                update_page_values();
+            }
+            else
+            {
+                const uint32_t now_ms = millis();
+                if ((g_last_bg_ui_refresh_ms == 0U) || (now_ms - g_last_bg_ui_refresh_ms >= UI_BG_REFRESH_MS))
+                {
+                    g_last_bg_ui_refresh_ms = now_ms;
+                    update_page_values();
+                }
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(task_delay_ms));
+            continue;
         }
+
         vTaskDelay(pdMS_TO_TICKS(UI_TASK_DELAY_MS));
     }
 }

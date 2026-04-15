@@ -2,7 +2,7 @@
 
 Offline environmental monitor firmware for LilyGO T-Display-S3 with BME680/BME688 and Bosch BSEC2.
 
-This document uses English only and documents Qwiic as the primary user wiring method.
+This document uses English only and documents direct GPIO I2C wiring as the primary user wiring method.
 
 ## Design Prototype
 
@@ -14,10 +14,14 @@ This document uses English only and documents Qwiic as the primary user wiring m
 - Boot self-check for LCD, touch controller, and sensor.
 - LVGL UI (320x170 landscape) with left/right swipe navigation.
 - Live values for temperature, humidity, pressure, derived altitude, gas resistance, IAQ, and IAQ accuracy.
-- Smart backlight timeout (default 15 seconds), wake on touch or wake button.
+- Smart backlight timeout (default 15 seconds), wake by GPIO14 button when display is off.
 - BSEC state persistence to NVS every 24 hours.
 - Runtime calibration commands (`set slp`, `set alt`) with immediate altitude update.
 - Quiet serial monitor by default (detailed debug is opt-in).
+- Stabilized battery percentage display using ADC averaging + filtering + hysteresis.
+- Dynamic CPU frequency scaling: high frequency while display is on, reduced frequency while display is off.
+- Touch controller enters sleep when display is off and wakes when GPIO14 wake button turns display on.
+- Lower UI task activity while display is off to reduce power without stopping sensor updates.
 - Header connectivity indicator:
   - Env_monitor text is cyan when sensor is healthy and data is fresh.
   - Env_monitor text turns red when sensor is disconnected/not healthy or no fresh update arrives within the refresh interval.
@@ -25,34 +29,33 @@ This document uses English only and documents Qwiic as the primary user wiring m
 ## Required Hardware
 
 - LilyGO T-Display-S3 (touch variant).
-- BME680/BME688 module with Qwiic/STEMMA QT connector.
-- 4-pin Qwiic JST-SH cable.
+- BME680/BME688 module (I2C).
+- Jumper wires for direct GPIO I2C wiring.
 - USB-C cable.
 - PC with Visual Studio Code and PlatformIO extension.
 
-## Sensor Wiring (Qwiic)
+## Sensor Wiring (Primary: GPIO I2C)
 
-Use a direct Qwiic cable between the board and the sensor.
+Use direct GPIO wiring between the board and the sensor.
 
-### 1. Connect Qwiic Cable
+### 1. Connect Sensor to GPIO I2C
 
-- Connect T-Display-S3 Qwiic port to BME680 Qwiic/STEMMA QT port.
-- No manual SDA/SCL jumper wiring is needed for normal usage.
+| BME680/BME688 Pin | T-Display-S3 Pin |
+| ----------------- | ---------------- |
+| VCC               | 3V3              |
+| GND               | GND              |
+| SDA               | GPIO18           |
+| SCL               | GPIO17           |
+| CS/CSB            | 3V3              |
+| SDO/ADDR          | GND (0x76) or 3V3 (0x77) |
 
-### 2. Qwiic Signal Mapping
+### 2. Bus Preference in Firmware
 
-| Qwiic Signal | Function  |
-| ------------ | --------- |
-| 3V3          | Power     |
-| GND          | Ground    |
-| SDA          | I2C Data  |
-| SCL          | I2C Clock |
+For current hardware setup, the primary and recommended wiring is:
 
-Firmware sensor-bus preference:
+- Main bus: SDA GPIO18, SCL GPIO17.
 
-- Preferred bus: ALT bus (SDA GPIO43, SCL GPIO44).
-
-Internal fallback to MAIN bus (GPIO18/GPIO17) remains in firmware for compatibility, but the documented user wiring path is Qwiic.
+Firmware probes MAIN bus first (GPIO18/GPIO17), then falls back to ALT bus for compatibility.
 
 ### 3. Sensor I2C Address Notes
 
@@ -68,14 +71,14 @@ For modules exposing CS/SDO jumpers:
 - CS/CSB must be HIGH (3V3) for I2C mode.
 - SDO usually selects address (GND -> 0x76, 3V3 -> 0x77).
 
-### 4. Qwiic Verification Steps
+### 4. GPIO Wiring Verification Steps
 
 After firmware upload:
 
 1. Open serial monitor at 115200.
 2. Run `status`.
 3. Confirm sensor status is `OK` and bus/address are reported.
-4. Run `i2c scan` if address validation is needed.
+4. Run `i2c scan` and confirm 0x76/0x77 is visible on main bus.
 
 If `status` is not valid immediately after boot, wait until the first BSEC sample is produced.
 
@@ -139,9 +142,13 @@ Command behavior notes:
 - Boot self-check displays LCD/touch/sensor status as OK/FAIL.
 - UI starts on page 1 and supports three swipe pages.
 - Backlight timeout default: 15000 ms.
-- Touch activity or wake button resets inactivity timer.
+- When display is ON: touch works for swipe navigation and keeps activity alive.
+- When display is OFF: touch input is ignored and touch controller is put into sleep mode.
+- GPIO14 wake button is the only wake source for the display timeout path.
+- When GPIO14 wakes the display, the touch controller is reactivated.
 - Sensor task runs separately (FreeRTOS) and retries initialization on failure.
 - If sensor data becomes stale for too long, firmware schedules automatic sensor re-initialization.
+- UI loop is throttled while display is off, while sensor sampling continues in the background.
 
 ## Main Configuration
 
@@ -149,8 +156,8 @@ Common settings in include/config.h:
 
 - `DISPLAY_TIMEOUT` (default 15000 ms)
 - `SENSOR_REFRESH` (default 15000 ms)
-- `PIN_I2C_ALT_SDA` (default 43)
-- `PIN_I2C_ALT_SCL` (default 44)
+- `CPU_FREQ_ACTIVE_MHZ` (default 240)
+- `CPU_FREQ_SLEEP_MHZ` (default 80)
 - `PIN_I2C_SDA` (default 18)
 - `PIN_I2C_SCL` (default 17)
 
@@ -165,11 +172,11 @@ Sea-level pressure calibration is stored in NVS namespace `sensorcfg` with key `
 - src/main.cpp: boot flow, self-check, task startup.
 - platformio.ini: board/environment/dependency configuration.
 
-## Qwiic Troubleshooting
+## Sensor Troubleshooting
 
 ### Sensor not detected
 
-- Confirm Qwiic cable is fully seated on both sides.
+- Confirm SDA/SCL are connected to GPIO18/GPIO17.
 - Confirm the module is BME680/BME688 (CHIP_ID must be 0x61).
 - Run `i2c scan` and verify 0x76 or 0x77 appears.
 - Run `sensor reinit` to force re-detection without reboot.

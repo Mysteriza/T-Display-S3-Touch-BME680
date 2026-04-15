@@ -695,11 +695,11 @@ bool sensors_init()
     {
         candidate_count = 0;
 
+        append_bus_candidates(candidates, 4, candidate_count, Wire, false);
         if (g_alt_bus_enabled)
         {
             append_bus_candidates(candidates, 4, candidate_count, g_alt_wire, true);
         }
-        append_bus_candidates(candidates, 4, candidate_count, Wire, false);
 
         if (candidate_count == 0)
         {
