@@ -40,13 +40,13 @@ Use direct GPIO wiring between the board and the sensor.
 
 ### 1. Connect Sensor to GPIO I2C
 
-| BME680/BME688 Pin | T-Display-S3 Pin |
-| ----------------- | ---------------- |
-| VCC               | 3V3              |
-| GND               | GND              |
-| SDA               | GPIO18           |
-| SCL               | GPIO17           |
-| CS/CSB            | 3V3              |
+| BME680/BME688 Pin | T-Display-S3 Pin         |
+| ----------------- | ------------------------ |
+| VCC               | 3V3                      |
+| GND               | GND                      |
+| SDA               | GPIO18                   |
+| SCL               | GPIO17                   |
+| CS/CSB            | 3V3                      |
 | SDO/ADDR          | GND (0x76) or 3V3 (0x77) |
 
 ### 2. Bus Preference in Firmware
