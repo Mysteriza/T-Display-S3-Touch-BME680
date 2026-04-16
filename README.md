@@ -1,7 +1,5 @@
 # T-Display-S3 Touch BME680 Monitor
 
-[![Build Firmware](https://github.com/Mysteriza/T-Display-S3-Touch-BME680/actions/workflows/build-firmware.yml/badge.svg)](https://github.com/Mysteriza/T-Display-S3-Touch-BME680/actions/workflows/build-firmware.yml)
-[![Release Firmware](https://github.com/Mysteriza/T-Display-S3-Touch-BME680/actions/workflows/release-firmware.yml/badge.svg)](https://github.com/Mysteriza/T-Display-S3-Touch-BME680/actions/workflows/release-firmware.yml)
 
 Offline environmental monitor firmware for LilyGO T-Display-S3 with BME680/BME688 and Bosch BSEC2.
 
