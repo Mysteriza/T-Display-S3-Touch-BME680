@@ -46,11 +46,7 @@ jobs:
         run: platformio run -e lilygo-t-display-s3
 
       - name: Prepare release files
-        run: |
-          mkdir -p output
-          cp .pio/build/lilygo-t-display-s3/firmware.bin output/firmware-app.bin
-          cp .pio/build/lilygo-t-display-s3/bootloader.bin output/bootloader.bin
-          cp .pio/build/lilygo-t-display-s3/partitions.bin output/partitions.bin
+        run: mkdir -p output
 
       - name: Merge flash image
         run: |
@@ -102,9 +98,7 @@ jobs:
           {
             echo "next_tag=${next_tag}"
             echo "previous_tag=${previous_tag}"
-          } >> "${GITHUB_OUTPUT}"
-
-          {
+            echo "release_body<<EOF"
             echo "# Firmware ${next_tag}"
             echo
             if [[ -n "${previous_tag}" ]]; then
@@ -115,43 +109,23 @@ jobs:
             echo
             echo "${commit_lines}"
             echo
-            echo "Assets included:"
-            echo "- firmware-merged.bin (flash at 0x0)"
-            echo "- firmware-app.bin (flash at 0x10000)"
-            echo "- bootloader.bin (flash at 0x0)"
-            echo "- partitions.bin (flash at 0x8000)"
+            echo "Release asset:"
+            echo "- firmware-merged.bin (single file, flash at 0x0)"
             echo
             echo "Quick flash command:"
             echo "\`\`\`bash"
             echo "esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 firmware-merged.bin"
             echo "\`\`\`"
-          } > output/CHANGELOG.md
-
-      - name: Write flashing note
-        run: |
-          cat > output/FLASHING.txt << 'EOF'
-          Flash-ready files:
-          - firmware-merged.bin  (recommended for end users, write at 0x0)
-          - firmware-app.bin     (application only, write at 0x10000)
-          - bootloader.bin       (offset 0x0)
-          - partitions.bin       (offset 0x8000)
-
-          Example (merged image):
-          esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 firmware-merged.bin
-          EOF
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Create or update GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.metadata.outputs.next_tag }}
           name: Firmware ${{ steps.metadata.outputs.next_tag }}
-          body_path: output/CHANGELOG.md
+          body: ${{ steps.metadata.outputs.release_body }}
           target_commitish: ${{ github.sha }}
           files: |
             output/firmware-merged.bin
-            output/firmware-app.bin
-            output/bootloader.bin
-            output/partitions.bin
-            output/FLASHING.txt
-            output/CHANGELOG.md
           overwrite_files: true

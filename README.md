@@ -4,6 +4,10 @@ Offline environmental monitor firmware for LilyGO T-Display-S3 + BME680/BME688 w
 
 This README explains how the system works and the meaning of every number on the screen based on the current code implementation, so users do not need to read the source code.
 
+## Design Prototype
+
+![UI Design Prototype](UI%20Design%20Prototype.png)
+
 ## Flow & Architecture
 
 The system runs in two main FreeRTOS loops on separate cores:
@@ -78,6 +82,75 @@ You need PlatformIO to build and flash this project.
    platformio run -e lilygo-t-display-s3 -t upload
    ```
    _(If you need a specific port, use: `platformio run -e lilygo-t-display-s3 -t upload --upload-port COM5`)_
+
+## Install From GitHub Release (Single BIN, Recommended)
+
+To avoid confusion, each firmware release now provides only one flash-ready binary file:
+
+- `firmware-merged.bin`
+
+You do not need `bootloader.bin`, `partitions.bin`, or app-only binaries.
+
+### Windows (Step-by-step)
+
+1. Open the repository **Releases** page.
+2. Download `firmware-merged.bin` from the latest release.
+3. Install Python 3 (if not installed):
+
+- https://www.python.org/downloads/
+
+4. Open **PowerShell**.
+5. Install esptool:
+
+```powershell
+py -m pip install --upgrade pip
+py -m pip install esptool
+```
+
+6. Connect ESP32-S3 board with USB.
+7. Find your COM port in Device Manager (example: `COM5`).
+8. Move to the folder that contains `firmware-merged.bin`:
+
+```powershell
+cd C:\path\to\download
+```
+
+9. Flash the board (offset must be `0x0`):
+
+```powershell
+py -m esptool --chip esp32s3 --port COM5 --baud 460800 write_flash 0x0 firmware-merged.bin
+```
+
+10. Wait until flashing is successful and the board reboots.
+
+### Linux / macOS (Step-by-step)
+
+1. Download `firmware-merged.bin` from the latest release.
+2. Install esptool:
+
+```bash
+python3 -m pip install --upgrade pip
+python3 -m pip install esptool
+```
+
+3. Connect ESP32-S3 board via USB.
+4. Find serial port:
+
+- Linux: typically `/dev/ttyUSB0` or `/dev/ttyACM0`
+- macOS: typically `/dev/cu.usbserial-*`
+
+5. Flash (offset `0x0`):
+
+```bash
+python3 -m esptool --chip esp32s3 --port /dev/ttyUSB0 --baud 460800 write_flash 0x0 firmware-merged.bin
+```
+
+### If Flashing Fails
+
+- Hold the **BOOT** button while plugging USB, then retry the flash command.
+- Close any Serial Monitor app that may be locking the COM/serial port.
+- Lower baud rate to `115200` in the same command if USB cable quality is poor.
+- Use a data-capable USB cable (not charge-only).
 
 ## Usage
 

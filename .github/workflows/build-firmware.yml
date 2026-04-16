@@ -38,11 +38,7 @@ jobs:
         run: platformio run -e lilygo-t-display-s3
 
       - name: Prepare output directory
-        run: |
-          mkdir -p output
-          cp .pio/build/lilygo-t-display-s3/firmware.bin output/firmware-app.bin
-          cp .pio/build/lilygo-t-display-s3/bootloader.bin output/bootloader.bin
-          cp .pio/build/lilygo-t-display-s3/partitions.bin output/partitions.bin
+        run: mkdir -p output
 
       - name: Merge flash image
         run: |
@@ -55,22 +51,9 @@ jobs:
             0x8000 .pio/build/lilygo-t-display-s3/partitions.bin \
             0x10000 .pio/build/lilygo-t-display-s3/firmware.bin
 
-      - name: Write flash notes
-        run: |
-          cat > output/FLASHING.txt << 'EOF'
-          Flash-ready files:
-          - firmware-merged.bin  (recommended for end users, write at 0x0)
-          - firmware-app.bin     (application only, write at 0x10000)
-          - bootloader.bin       (offset 0x0)
-          - partitions.bin       (offset 0x8000)
-
-          Example (merged image):
-          esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 firmware-merged.bin
-          EOF
-
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
           name: t-display-s3-firmware
-          path: output/
+          path: output/firmware-merged.bin
           retention-days: 14
