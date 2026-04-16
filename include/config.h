@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
-
+#include <cstdint>
 namespace cfg
 {
     namespace pins
@@ -41,7 +41,7 @@ namespace cfg
 
     namespace timing
     {
-        inline constexpr uint32_t kDisplayTimeoutMs = 10000UL;
+        inline constexpr uint32_t kDisplayTimeoutMs = 15000UL;
         inline constexpr uint32_t kButtonDebounceMs = 120UL;
 
         inline constexpr uint32_t kSensorRefreshMs = 30000UL;
@@ -54,6 +54,7 @@ namespace cfg
         inline constexpr uint32_t kSensorTaskDelayMs = 200UL;
         inline constexpr uint32_t kSensorInitRetryMs = 1000UL;
         inline constexpr uint32_t kSensorLinkProbeMs = 5000UL;
+        inline constexpr uint32_t kBootDataCheckMs = 5000UL;
 
         inline constexpr uint32_t kBsecStateSaveMs = 4UL * 60UL * 60UL * 1000UL; // 4 Hours
         inline constexpr uint32_t kBsecStateSaveMinGapMs = 10UL * 60UL * 1000UL; // 10 Minutes
@@ -62,6 +63,7 @@ namespace cfg
         inline constexpr uint32_t kCpuLoadRefreshMs = kSensorRefreshMs;
         inline constexpr uint32_t kSysInfoRefreshMs = kSensorRefreshMs;
         inline constexpr uint32_t kUiValuesRefreshMs = kSensorRefreshMs;
+        inline constexpr uint32_t kUptimeRefreshMs = 1000UL;
     }
 
     namespace display

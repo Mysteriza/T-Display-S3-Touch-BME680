@@ -16,6 +16,10 @@ struct BootDiagStatus
     bool touch_ok = false;
     bool sensor_done = false;
     bool sensor_ok = false;
+    bool data_done = false;
+    bool data_ok = false;
+    bool iaq_done = false;
+    bool iaq_ok = false;
 };
 
 class UiController
@@ -56,8 +60,6 @@ private:
         lv_obj_t *iaq_arc = nullptr;
         lv_obj_t *iaq_number = nullptr;
         lv_obj_t *iaq_status = nullptr;
-        lv_obj_t *temp = nullptr;
-        lv_obj_t *humidity = nullptr;
     };
 
     struct PageSysData
@@ -98,6 +100,7 @@ private:
     void updateBatteryLabels();
     uint32_t readBatteryMv(bool *has_battery);
     uint8_t batteryPercentFromMv(uint32_t mv) const;
+    uint8_t estimateCpuLoadPercent(uint32_t now_ms);
     lv_color_t blendHexColors(uint32_t from_hex, uint32_t to_hex, uint8_t mix_255) const;
     lv_color_t batteryColorFromPercent(uint8_t percent, bool usb_power) const;
 
@@ -130,6 +133,8 @@ private:
     lv_obj_t *boot_lcd_ = nullptr;
     lv_obj_t *boot_touch_ = nullptr;
     lv_obj_t *boot_sensor_ = nullptr;
+    lv_obj_t *boot_data_ = nullptr;
+    lv_obj_t *boot_iaq_ = nullptr;
 
     lv_obj_t *pages_[3] = {nullptr, nullptr, nullptr};
     lv_obj_t *env_headers_[3] = {nullptr, nullptr, nullptr};
@@ -151,6 +156,7 @@ private:
     uint8_t bat_up_confirm_ = 0;
 
     uint32_t last_ui_refresh_ms_ = 0;
+    uint32_t last_uptime_refresh_ms_ = 0;
     uint32_t last_cpu_refresh_ms_ = 0;
     uint32_t last_sys_info_refresh_ms_ = 0;
     uint32_t last_bg_ui_refresh_ms_ = 0;

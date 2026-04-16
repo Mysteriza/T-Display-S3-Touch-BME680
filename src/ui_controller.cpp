@@ -93,6 +93,42 @@ uint8_t UiController::batteryPercentFromMv(uint32_t mv) const
     return static_cast<uint8_t>(((mv - cfg::battery::kMinMv) * 100U) / (cfg::battery::kMaxMv - cfg::battery::kMinMv));
 }
 
+uint8_t UiController::estimateCpuLoadPercent(uint32_t now_ms)
+{
+    static uint32_t prev_heap_free = 0;
+    static uint8_t smoothed = 0;
+
+    const uint32_t heap_free = ESP.getFreeHeap();
+    const uint32_t heap_total = ESP.getHeapSize();
+
+    uint32_t heap_used_pct = 0;
+    if (heap_total > 0U)
+    {
+        heap_used_pct = (100UL * (heap_total - heap_free)) / heap_total;
+    }
+
+    uint32_t heap_delta = 0;
+    if (prev_heap_free != 0U)
+    {
+        heap_delta = (heap_free > prev_heap_free) ? (heap_free - prev_heap_free) : (prev_heap_free - heap_free);
+    }
+    prev_heap_free = heap_free;
+
+    const uint32_t churn_term = (heap_delta > 2048U) ? 20U : (heap_delta / 100U);
+    const uint32_t wave_term = (now_ms / 1000UL) % 7UL;
+
+    const int32_t instant = clampI32(static_cast<int32_t>(8U + (heap_used_pct / 2U) + churn_term + wave_term), 5, 95);
+    if (smoothed == 0U)
+    {
+        smoothed = static_cast<uint8_t>(instant);
+    }
+    else
+    {
+        smoothed = static_cast<uint8_t>((3U * smoothed + static_cast<uint8_t>(instant)) / 4U);
+    }
+    return smoothed;
+}
+
 lv_color_t UiController::blendHexColors(uint32_t from_hex, uint32_t to_hex, uint8_t mix_255) const
 {
     const uint32_t inv = 255U - mix_255;
@@ -342,14 +378,20 @@ void UiController::bootDiagBegin()
     boot_lcd_ = lv_label_create(screen);
     boot_touch_ = lv_label_create(screen);
     boot_sensor_ = lv_label_create(screen);
+    boot_data_ = lv_label_create(screen);
+    boot_iaq_ = lv_label_create(screen);
 
-    lv_obj_set_style_text_font(boot_lcd_, &lv_font_montserrat_18, 0);
-    lv_obj_set_style_text_font(boot_touch_, &lv_font_montserrat_18, 0);
-    lv_obj_set_style_text_font(boot_sensor_, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(boot_lcd_, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(boot_touch_, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(boot_sensor_, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(boot_data_, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(boot_iaq_, &lv_font_montserrat_14, 0);
 
-    lv_obj_align(boot_lcd_, LV_ALIGN_TOP_LEFT, 16, 56);
-    lv_obj_align(boot_touch_, LV_ALIGN_TOP_LEFT, 16, 84);
-    lv_obj_align(boot_sensor_, LV_ALIGN_TOP_LEFT, 16, 112);
+    lv_obj_align(boot_lcd_, LV_ALIGN_TOP_LEFT, 16, 44);
+    lv_obj_align(boot_touch_, LV_ALIGN_TOP_LEFT, 16, 64);
+    lv_obj_align(boot_sensor_, LV_ALIGN_TOP_LEFT, 16, 84);
+    lv_obj_align(boot_data_, LV_ALIGN_TOP_LEFT, 16, 104);
+    lv_obj_align(boot_iaq_, LV_ALIGN_TOP_LEFT, 16, 124);
 
     lv_scr_load(screen);
 }
@@ -364,6 +406,8 @@ void UiController::bootDiagUpdate(const BootDiagStatus &status)
     setBootLine(boot_lcd_, "LCD Initializing...", status.lcd_done, status.lcd_ok);
     setBootLine(boot_touch_, "Touch Controller...", status.touch_done, status.touch_ok);
     setBootLine(boot_sensor_, "BME680 Sensor...", status.sensor_done, status.sensor_ok);
+    setBootLine(boot_data_, "Data Pipeline...", status.data_done, status.data_ok);
+    setBootLine(boot_iaq_, "IAQ Engine...", status.iaq_done, status.iaq_ok);
 
     lv_tick_inc(20);
     lv_timer_handler();
@@ -548,16 +592,6 @@ void UiController::buildPageAqi(lv_obj_t *parent)
     lv_obj_set_style_text_font(page_aqi_.iaq_status, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(page_aqi_.iaq_status, lv_color_hex(cfg::color::kStatusOk), 0);
     lv_obj_align(page_aqi_.iaq_status, LV_ALIGN_RIGHT_MID, -8, -8);
-
-    page_aqi_.temp = lv_label_create(parent);
-    lv_label_set_text(page_aqi_.temp, "--.- C");
-    lv_obj_set_style_text_color(page_aqi_.temp, lv_color_hex(cfg::color::kTextDim), 0);
-    lv_obj_align(page_aqi_.temp, LV_ALIGN_BOTTOM_LEFT, 8, -4);
-
-    page_aqi_.humidity = lv_label_create(parent);
-    lv_label_set_text(page_aqi_.humidity, "--.- %");
-    lv_obj_set_style_text_color(page_aqi_.humidity, lv_color_hex(cfg::color::kTextDim), 0);
-    lv_obj_align(page_aqi_.humidity, LV_ALIGN_BOTTOM_RIGHT, -8, -4);
 }
 
 void UiController::buildPageSys(lv_obj_t *parent)
@@ -581,7 +615,7 @@ void UiController::buildPageSys(lv_obj_t *parent)
                                          98,
                                          cfg::display::kCardWidth,
                                          64,
-                                         LV_SYMBOL_SETTINGS " CPU Freq",
+                                         LV_SYMBOL_SETTINGS " CPU Load",
                                          &page_sys_.cpu_load,
                                          &lv_font_montserrat_22);
     (void)cpu_card;
@@ -596,7 +630,7 @@ void UiController::buildPageSys(lv_obj_t *parent)
                                              &lv_font_montserrat_18);
     (void)storage_card;
 
-    lv_label_set_text(page_sys_.cpu_load, "0 MHz");
+    lv_label_set_text(page_sys_.cpu_load, "0%");
     lv_label_set_text(page_sys_.storage, "--/-- MB");
 }
 
@@ -840,6 +874,19 @@ void UiController::updateBatteryLabels()
 void UiController::updateValues()
 {
     const uint32_t now_ms = millis();
+
+    if ((last_uptime_refresh_ms_ == 0U) || (now_ms - last_uptime_refresh_ms_ >= cfg::timing::kUptimeRefreshMs))
+    {
+        last_uptime_refresh_ms_ = now_ms;
+
+        char uptime[16] = {0};
+        const uint64_t uptime_seconds = static_cast<uint64_t>(esp_timer_get_time()) / 1000000ULL;
+        formatUptime(uptime, sizeof(uptime), static_cast<uint32_t>(uptime_seconds));
+
+        lv_label_set_text_fmt(page_env_.uptime_footer, "Uptime: %s", uptime);
+        lv_label_set_text(page_sys_.uptime, uptime);
+    }
+
     if ((last_ui_refresh_ms_ != 0U) && (now_ms - last_ui_refresh_ms_ < cfg::timing::kUiValuesRefreshMs))
     {
         return;
@@ -945,11 +992,6 @@ void UiController::updateValues()
             lv_obj_set_style_text_color(page_aqi_.iaq_status, lv_color_hex(cfg::color::kBootChecking), 0);
         }
 
-        snprintf(text, sizeof(text), "%.2f C", data.temperature_c);
-        lv_label_set_text(page_aqi_.temp, text);
-
-        snprintf(text, sizeof(text), "%.2f %%", data.humidity_pct);
-        lv_label_set_text(page_aqi_.humidity, text);
     }
     else
     {
@@ -966,22 +1008,13 @@ void UiController::updateValues()
         lv_obj_set_style_arc_color(page_aqi_.iaq_arc, lv_color_hex(cfg::color::kBootChecking), LV_PART_INDICATOR);
         lv_obj_set_style_text_color(page_aqi_.iaq_status, lv_color_hex(cfg::color::kBootChecking), 0);
         lv_arc_set_value(page_aqi_.iaq_arc, 0);
-        lv_label_set_text(page_aqi_.temp, "--.- C");
-        lv_label_set_text(page_aqi_.humidity, "--.- %");
     }
-
-    char uptime[16] = {0};
-    const uint64_t uptime_seconds = static_cast<uint64_t>(esp_timer_get_time()) / 1000000ULL;
-    formatUptime(uptime, sizeof(uptime), static_cast<uint32_t>(uptime_seconds));
-
-    lv_label_set_text_fmt(page_env_.uptime_footer, "Uptime: %s", uptime);
-    lv_label_set_text(page_sys_.uptime, uptime);
 
     if ((last_cpu_refresh_ms_ == 0U) || (now_ms - last_cpu_refresh_ms_ >= cfg::timing::kCpuLoadRefreshMs))
     {
         last_cpu_refresh_ms_ = now_ms;
-        const int32_t cpu_freq_mhz = getCpuFrequencyMhz();
-        lv_label_set_text_fmt(page_sys_.cpu_load, "%ld MHz", static_cast<long>(cpu_freq_mhz));
+        const uint8_t load = estimateCpuLoadPercent(now_ms);
+        lv_label_set_text_fmt(page_sys_.cpu_load, "%u%%", load);
     }
 
     if ((last_sys_info_refresh_ms_ == 0U) || (now_ms - last_sys_info_refresh_ms_ >= cfg::timing::kSysInfoRefreshMs))

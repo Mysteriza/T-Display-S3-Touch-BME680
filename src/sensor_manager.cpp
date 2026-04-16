@@ -707,7 +707,7 @@ bool SensorManager::init()
     bsec_.attachCallback(SensorManager::bsecCallbackBridge);
 
     const uint32_t warmup_start = millis();
-    while ((millis() - warmup_start < 2500U) && !live_.has_new_sample)
+    while ((millis() - warmup_start < 4000U) && !live_.has_new_sample)
     {
         bsec_.run();
         delay(40);

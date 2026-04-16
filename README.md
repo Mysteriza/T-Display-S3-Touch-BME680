@@ -1,221 +1,117 @@
 # T-Display-S3 Touch BME680 Monitor
 
-Firmware monitor lingkungan offline untuk LilyGO T-Display-S3 + BME680/BME688 dengan Bosch BSEC2.
+Offline environmental monitor firmware for LilyGO T-Display-S3 + BME680/BME688 with Bosch BSEC2.
 
-README ini menjelaskan cara kerja sistem dan arti setiap angka di layar berdasarkan implementasi kode saat ini, supaya pengguna tidak perlu membaca source code.
+This README explains how the system works and the meaning of every number on the screen based on the current code implementation, so users do not need to read the source code.
 
-## Design Prototype
+## Flow & Architecture
 
-![UI Design Prototype](UI%20Design%20Prototype.png)
+The system runs in two main FreeRTOS loops on separate cores:
 
-## Ringkasan Cara Kerja
+- **Sensor loop**: Runs the BSEC2 scheduler continuously, reads BME68x data, and builds data snapshots.
+- **UI loop**: Reads the latest snapshot data and renders it to the display.
 
-Sistem berjalan dalam dua loop utama (FreeRTOS, beda core):
+Important principles:
 
-- Loop sensor: menjalankan scheduler BSEC2 terus-menerus, membaca data BME68x, lalu membangun snapshot data.
-- Loop UI: membaca snapshot terakhir dan merender ke layar.
+- The sensor is processed in real-time by BSEC (`run()` is called frequently), not every 30 seconds.
+- Data published to the UI is synchronized every `kSensorRefreshMs` (default 30 seconds) to reduce redraws and save battery.
+- If data is temporarily invalid, the UI retains the last valid snapshot (anti-flicker), and will display NO DATA if it truly becomes stale.
 
-Prinsip penting:
-
-- Sensor diproses real-time oleh BSEC (`run()` dipanggil sering), bukan tiap 30 detik.
-- Data yang dipublikasikan ke UI disinkronkan setiap `kSensorRefreshMs` (default 30 detik) untuk mengurangi redraw dan hemat baterai.
-- Jika data invalid sementara, UI menahan snapshot valid terakhir dulu (anti flicker), lalu menampilkan `No Data` bila memang stale.
-
-## Struktur Modul
+## Project Structure Overview
 
 ```text
 include/
-  config.h
-  power_mgmt.h
-  sensor_manager.h
-  ui_controller.h
+  config.h          # Tuning parameters (pins, timings, colors)
+  power_mgmt.h      # Screen timeout, wake logic
+  sensor_manager.h  # BSEC2 pipeline, sensor reading
+  ui_controller.h   # LVGL UI and rendering
 src/
-  main.cpp
-  power_mgmt.cpp
-  sensor_manager.cpp
-  ui_controller.cpp
+  main.cpp          # App entry point
+  power_mgmt.cpp    # Power management logic
+  sensor_manager.cpp# Sensor processing
+  ui_controller.cpp # UI lifecycle
 ```
 
-- `config.h`: semua parameter yang bisa dituning (pin, timing, warna, batas validasi).
-- `sensor_manager.*`: pipeline BSEC2, health sensor, simpan/restore state kalibrasi, command serial.
-- `ui_controller.*`: semua tampilan LVGL dan mapping angka ke label/status/warna.
-- `power_mgmt.*`: timeout layar, wake button, dan profile frekuensi CPU.
+## Features
 
-## Data Di Setiap Page
+- **Real-time Environment Data**: Temperature, Humidity, Air Pressure, and calculated Altitude.
+- **AQI Monitoring**: Real-time Gas Resistance and Indoor Air Quality (IAQ) from Bosch BSEC2.
+- **System Telemetry**: CPU Load estimate (%), Uptime counter, and Battery Percentage.
+- **Power Optimization**: Background sensor processing with reduced screen redraws.
+- **Serial Diagnostics**: Built-in CLI for status checks and manual calibration.
+- **Automatic Recovery**: Detects and clears stuck IAQ states automatically.
+- **Extended Boot Self-Check**: Verifies display, touch, sensor init, data pipeline validity, and IAQ pipeline readiness before entering normal runtime.
 
-### Page 1 (Environment)
+## Runtime Defaults
 
-- `Temperature (C)`
-  - Sumber: `BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE`.
-  - Ini suhu yang sudah dikompensasi panas sensor, lebih representatif daripada suhu mentah.
+- Display timeout: **15 seconds** of inactivity.
+- Sensor publish interval to UI: **30 seconds** (`kSensorRefreshMs`).
+- Uptime label refresh: **1 second**.
 
-- `Humidity (%)`
-  - Sumber: `BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY`.
-  - Juga sudah dikompensasi terhadap efek panas internal.
-
-- `Pressure (hPa)`
-  - Sumber: `BSEC_OUTPUT_RAW_PRESSURE` (wrapper BSEC2 Arduino sudah dalam hPa di proyek ini).
-
-- `Altitude (m)`
-  - Bukan nilai langsung dari sensor.
-  - Dihitung dari pressure + sea-level pressure (SLP/QNH) dengan rumus barometrik:
-  - $alt = 44330 \times (1 - (P / SLP)^{0.1903})$
-
-### Page 2 (AQI)
-
-- `Gas resistance (kOhm)`
-  - Sumber: `BSEC_OUTPUT_RAW_GAS` (Ohm), lalu dibagi 1000 menjadi kOhm.
-
-- `IAQ`
-  - Sumber utama: `BSEC_OUTPUT_IAQ`.
-  - Fallback: jika IAQ utama invalid, pakai `BSEC_OUTPUT_STATIC_IAQ`.
-  - Nilai ditampilkan sebagai integer untuk keterbacaan.
-
-- `Status`
-  - Dibentuk dari nilai IAQ:
-  - `0..50 Excellent`, `51..100 Good`, `101..150 Moderate`, `151..200 Poor`, `201..300 Unhealthy`, `>300 Hazardous`.
-  - Warna mengikuti severity status (hijau -> kuning -> merah).
-
-- `Accuracy`
-  - Sumber: `out.accuracy` dari output IAQ BSEC (0..3).
-  - Label: `Very Low`, `Low`, `Medium`, `High`.
-  - Warna:
-  - `Very Low/Low = merah`, `Medium = kuning`, `High = hijau`.
-
-- `Temp` dan `Humidity` mini di page AQI
-  - Nilainya sama dengan data environment yang sudah dikompensasi BSEC.
-
-### Page 3 (System)
-
-- `Uptime`
-  - Dihitung dari `esp_timer_get_time()` lalu diformat `HH:MM:SS`.
-
-- `CPU Freq (MHz)`
-  - Bukan “estimasi load”.
-  - Nilai real dari `getCpuFrequencyMhz()`.
-  - Akan berubah sesuai mode power manager (aktif/sleep).
-
-- `Storage (MB)`
-  - `Total`: `ESP.getFlashChipSize()`.
-  - `Free`: `ESP.getFreeSketchSpace()`.
-  - Ini metrik ruang firmware flash, bukan sisa RAM heap.
-
-- `Battery (%)`
-  - Dari ADC pin battery, dikalibrasi (`esp_adc_cal_raw_to_voltage`), dikali 2 karena divider.
-  - Dihaluskan, lalu dipetakan ke 0..100% dengan batas `kMinMv..kMaxMv`.
-
-## Data Real (Bukan Dummy)
-
-Yang diukur langsung dari sensor/BSEC:
-
-- Temperature, humidity, pressure, gas resistance, IAQ, static IAQ, run-in status, stabilization status, IAQ accuracy.
-
-Yang dihitung dari data nyata:
-
-- Altitude (dari pressure + SLP), status IAQ (dari nilai IAQ), label accuracy (dari level accuracy), battery %, uptime, storage string.
-
-Yang bukan sensor lingkungan:
-
-- CPU frequency (telemetri sistem), storage (telemetri flash).
-
-Sistem tidak menggunakan angka random/fake untuk nilai sensor.
-
-## Kenapa IAQ Bisa Stuck di 50 dan Cara Recovery
-
-Secara teori BSEC, pada fase awal kalibrasi IAQ bisa lama di sekitar 50 dan accuracy rendah.
-
-Proteksi di firmware:
-
-- Deteksi pola stuck IAQ sekitar 50 + accuracy rendah dalam durasi panjang (`kIaqStuckTimeoutMs`).
-- Jika terpenuhi, firmware melakukan recovery satu kali:
-  - hapus state blob BSEC,
-  - reinit pipeline,
-  - lanjut kalibrasi dari kondisi baru.
-
-State kalibrasi normal tetap disimpan periodik dan saat accuracy naik, agar progress tidak hilang setiap reboot.
-
-## Sinkronisasi Refresh dan Hemat Baterai
-
-- Publish snapshot sensor ke UI: tiap `kSensorRefreshMs` (default 30 detik).
-- Refresh nilai UI: interval yang sama (`kUiValuesRefreshMs = kSensorRefreshMs`).
-
-Dampak:
-
-- Redraw lebih sedikit.
-- Konsumsi daya layar/CPU lebih rendah.
-- Tampilan lebih stabil (tidak berkedip update terus).
-
-## Hardware
+## Hardware & Wiring
 
 - LilyGO T-Display-S3 (touch)
-- BME680/BME688 via I2C
+- BME680 or BME688 module (via I2C)
 - USB-C cable
 
-## Wiring
+| Sensor   | T-Display-S3             |
+| -------- | ------------------------ |
+| VCC      | 3V3                      |
+| GND      | GND                      |
+| SDA      | GPIO18                   |
+| SCL      | GPIO17                   |
+| CS/CSB   | 3V3                      |
+| SDO/ADDR | GND (0x76) or 3V3 (0x77) |
 
-| Sensor   | T-Display-S3               |
-| -------- | -------------------------- |
-| VCC      | 3V3                        |
-| GND      | GND                        |
-| SDA      | GPIO18                     |
-| SCL      | GPIO17                     |
-| CS/CSB   | 3V3                        |
-| SDO/ADDR | GND (0x76) atau 3V3 (0x77) |
+## Installation
 
-## Build dan Upload
+You need PlatformIO to build and flash this project.
 
-Build:
+1. Clone this repository.
+2. Open the project folder in PlatformIO.
+3. Build the project firmware:
+   ```bash
+   platformio run -e lilygo-t-display-s3
+   ```
+4. Upload to the board:
+   ```bash
+   platformio run -e lilygo-t-display-s3 -t upload
+   ```
+   _(If you need a specific port, use: `platformio run -e lilygo-t-display-s3 -t upload --upload-port COM5`)_
 
-```bash
-platformio run -e lilygo-t-display-s3
-```
+## Usage
 
-Upload:
+Once flashed, the monitor will immediately boot up and begin calibrating the sensor. The touch screen can be used to navigate between logical pages:
 
-```bash
-platformio run -e lilygo-t-display-s3 -t upload
-```
+- **Swipe Left/Right** on the touch screen to move between Environment, AQI, and System Telemetry pages.
+- The UI will automatically hide after inactivity to preserve battery but will continue sampling in the background. Tap the screen or press the wake button to turn on the screen.
+- AQI page intentionally focuses on Gas, IAQ value, Status, and Accuracy only (no duplicate Temp/Humidity rows).
 
-Jika perlu port spesifik:
+### Serial interface (CLI)
 
-```bash
-platformio run -e lilygo-t-display-s3 -t upload --upload-port COM5
-```
+Use the built-in CLI to check real-time statuses and perform manual calibrations:
 
-## Serial Commands
-
-Buka monitor:
+Open the serial monitor:
 
 ```bash
 platformio device monitor -b 115200
 ```
 
-| Command            | Fungsi                                               |
-| ------------------ | ---------------------------------------------------- |
-| `help`             | Daftar command                                       |
-| `status`           | Status sensor + data terbaru                         |
-| `get slp`          | Lihat sea-level pressure saat ini                    |
-| `set slp <hPa>`    | Set sea-level pressure manual                        |
-| `set alt <meter>`  | Kalibrasi sea-level pressure dari altitude referensi |
-| `reset slp`        | Reset sea-level pressure ke default                  |
-| `sensor reinit`    | Paksa reinit sensor/BSEC                             |
-| `i2c scan`         | Scan device di bus I2C                               |
-| `debug detail on`  | Aktifkan debug verbose periodik                      |
-| `debug detail off` | Matikan debug verbose                                |
+Available commands:
 
-## Troubleshooting Cepat
+- `help`: Command list
+- `status`: Show sensor status + latest data
+- `get slp`: Get the current sea-level pressure setting
+- `set slp <hPa>`: Manually set the sea-level pressure
+- `set alt <meter>`: Calibrate sea-level pressure from reference altitude
+- `reset slp`: Reset sea-level pressure to default
+- `sensor reinit`: Force BSEC/sensor pipeline re-initialization
+- `i2c scan`: Scan the I2C bus for devices
+- `debug detail on`: Turn on periodic verbose debugging
+- `debug detail off`: Turn off verbose debugging
 
-- Sensor tidak terdeteksi:
-  - Cek wiring SDA/SCL dan alamat 0x76/0x77.
+## Troubleshooting
 
-- Accuracy lama di `Very Low`:
-  - Jalankan perangkat kontinu lebih lama.
-  - Pantau `status` (run-in dan stabilization).
-
-- IAQ terlihat tidak banyak berubah:
-  - Uji dengan perubahan lingkungan nyata (ventilasi, sumber VOC aman, perubahan kelembapan).
-  - Cek `status` berkala untuk melihat snapshot baru dan progression accuracy.
-
-- Angka berkedip/hilang:
-  - Firmware menahan snapshot valid saat gangguan singkat.
-  - Jika data benar-benar stale, UI akan tampil `No Data`.
+- **Sensor not detected**: Check the SDA/SCL wiring and the 0x76/0x77 address configuration.
+- **Accuracy is stuck at "Very Low"**: Leave it running continuously; monitor the `status` via Serial.
+- **Screen numbers flicker/disappear**: The firmware pauses data publishing when I2C is unstable to prevent flickering. Provide better power or check connections.
