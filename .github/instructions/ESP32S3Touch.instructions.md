@@ -52,4 +52,4 @@
 - Always check the "Problems" tab (@current_problems) and fix issues immediately.
 - If you encounter an error, provide a clear, actionable solution. Do not just state the error.
 - Do not generate code that is not directly related to the specified requirements.
-- NEVER PUT changelog in README.md file! Make it clean and concise but instructive and informative.
+- NEVER PUT changelog in README.md file! Make it clean and concise but instructive and informative. And ALWAYS use English in README.md, no other languages.
