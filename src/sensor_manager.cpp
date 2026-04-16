@@ -370,6 +370,7 @@ void SensorManager::probeRealtimeLinkIfDue(uint32_t now_ms)
 void SensorManager::seedDefaultSnapshot()
 {
     sensor_data_ = SensorData{};
+    last_safe_snapshot_ = sensor_data_;
     live_ = LiveReadings{};
 }
 
@@ -459,6 +460,7 @@ void SensorManager::publishSnapshot(uint32_t now_ms)
     sensor_data_.altitude_m = calcAltitude(live_.pressure_hpa);
     sensor_data_.valid = has_core;
     sensor_data_.last_update_ms = now_ms;
+    last_safe_snapshot_ = sensor_data_;
 
     live_.has_new_sample = false;
 }
@@ -480,11 +482,15 @@ void SensorManager::refreshAltitudeFromSnapshot()
 
 bool SensorManager::isIaqStuckPattern() const
 {
-    const bool iaq_flat = isfinite(live_.iaq) && (fabsf(live_.iaq - cfg::sensor::kIaqStuckTarget) <= cfg::sensor::kIaqStuckTolerance);
-    const bool static_flat = isfinite(live_.iaq_static) && (fabsf(live_.iaq_static - cfg::sensor::kIaqStuckTarget) <= cfg::sensor::kIaqStuckTolerance);
-    const bool still_calibrating = (live_.iaq_accuracy == 0U) &&
+    const bool iaq_flat = isfinite(live_.iaq) &&
+                          (fabsf(live_.iaq - cfg::sensor::kIaqStuckTarget) <= cfg::sensor::kIaqStuckTolerance);
+    const bool static_flat = isfinite(live_.iaq_static) &&
+                             (fabsf(live_.iaq_static - cfg::sensor::kIaqStuckTarget) <= cfg::sensor::kIaqStuckTolerance);
+
+    const bool still_calibrating = (live_.iaq_accuracy <= 1U) &&
                                    (!isfinite(live_.run_in_status) || (live_.run_in_status < 1.0f) ||
                                     !isfinite(live_.stabilization_status) || (live_.stabilization_status < 1.0f));
+
     return iaq_flat && static_flat && still_calibrating;
 }
 
@@ -514,13 +520,15 @@ void SensorManager::maybeRecoverStuckIaq(uint32_t now_ms)
 
     if (detailed_debug_)
     {
-        Serial.println("[BME680] IAQ stuck near 50 with acc=0 for extended time. Clearing BSEC state and forcing reinit.");
+        Serial.println("[BME680] IAQ stuck near 50 with low accuracy. Clearing BSEC state and reinitializing once.");
     }
 
     clearBsecStateBlob();
     iaq_stuck_recovery_done_ = true;
     iaq_stuck_since_ms_ = 0;
+    live_ = LiveReadings{};
     healthy_ = false;
+    realtime_connected_ = false;
 }
 
 bool SensorManager::loadRuntimeConfig()
@@ -554,16 +562,15 @@ bool SensorManager::init()
         sensor_mutex_ = xSemaphoreCreateMutex();
     }
 
-    seedDefaultSnapshot();
+    live_ = LiveReadings{};
 
     healthy_ = false;
     realtime_connected_ = false;
     link_ok_streak_ = 0;
     link_fail_streak_ = 0;
     last_link_probe_ms_ = 0;
-    iaq_stuck_since_ms_ = 0;
     last_saved_accuracy_ = 0;
-    iaq_stuck_recovery_done_ = false;
+    iaq_stuck_since_ms_ = 0;
 
     bme_wire_ = &Wire;
     bme_addr_ = cfg::pins::kBmeAddressConfigured;
@@ -642,11 +649,16 @@ bool SensorManager::init()
         return false;
     }
 
+    // Recommended for enclosed products where sensor board self-heating exists.
+    bsec_.setTemperatureOffset(1.5f);
+
     if (!bsec_.setConfig(kBsecIaqConfig))
     {
         healthy_ = false;
         return false;
     }
+
+    restoreBsecState();
 
     stale_reinit_ms_ = cfg::timing::kSensorStaleReinitMs;
 
@@ -694,8 +706,6 @@ bool SensorManager::init()
 
     bsec_.attachCallback(SensorManager::bsecCallbackBridge);
 
-    restoreBsecState();
-
     const uint32_t warmup_start = millis();
     while ((millis() - warmup_start < 2500U) && !live_.has_new_sample)
     {
@@ -736,29 +746,47 @@ void SensorManager::onBsecOutputs(const bsecOutputs &outputs)
         switch (out.sensor_id)
         {
         case BSEC_OUTPUT_IAQ:
-            live_.iaq = out.signal;
+            if (isfinite(out.signal))
+            {
+                live_.iaq = out.signal;
+            }
             live_.iaq_accuracy = out.accuracy;
             has_output = true;
             break;
         case BSEC_OUTPUT_STATIC_IAQ:
-            live_.iaq_static = out.signal;
+            if (isfinite(out.signal))
+            {
+                live_.iaq_static = out.signal;
+            }
             has_output = true;
             break;
         case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE:
-            live_.temperature_c = out.signal;
+            if (isfinite(out.signal))
+            {
+                live_.temperature_c = out.signal;
+            }
             has_output = true;
             break;
         case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY:
-            live_.humidity_pct = out.signal;
+            if (isfinite(out.signal))
+            {
+                live_.humidity_pct = out.signal;
+            }
             has_output = true;
             break;
         case BSEC_OUTPUT_RAW_PRESSURE:
             // Bosch BSEC2 Arduino wrapper already converts pressure to hPa.
-            live_.pressure_hpa = out.signal;
+            if (isfinite(out.signal) && (out.signal > 0.0f))
+            {
+                live_.pressure_hpa = out.signal;
+            }
             has_output = true;
             break;
         case BSEC_OUTPUT_RAW_GAS:
-            live_.gas_resistance_kohm = out.signal / 1000.0f;
+            if (isfinite(out.signal) && (out.signal > 0.0f))
+            {
+                live_.gas_resistance_kohm = out.signal / 1000.0f;
+            }
             has_output = true;
             break;
         case BSEC_OUTPUT_RUN_IN_STATUS:
@@ -783,13 +811,12 @@ void SensorManager::onBsecOutputs(const bsecOutputs &outputs)
 
 SensorData SensorManager::getData() const
 {
-    SensorData copy = sensor_data_;
-    ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(20));
+    ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(30));
     if (guard.ownsLock())
     {
-        copy = sensor_data_;
+        return sensor_data_;
     }
-    return copy;
+    return last_safe_snapshot_;
 }
 
 void SensorManager::requestReinit()
@@ -928,10 +955,6 @@ void SensorManager::taskLoop()
         if (link_fail_streak_ >= cfg::sensor::kLinkFailLimit)
         {
             realtime_connected_ = false;
-            healthy_ = false;
-            run_fail_streak = 0;
-            vTaskDelay(wait_ticks);
-            continue;
         }
 
         const bool run_ok = bsec_.run();
@@ -964,20 +987,35 @@ void SensorManager::taskLoop()
 
         if (live_.has_new_sample)
         {
-            publishSnapshot(now_ms);
-            last_publish_ms_ = now_ms;
-
-            if ((live_.iaq_accuracy > last_saved_accuracy_) &&
-                (now_ms - last_state_save_ms_ >= cfg::timing::kBsecStateSaveMinGapMs))
+            const bool publish_due = (last_publish_ms_ == 0U) ||
+                                     (now_ms - last_publish_ms_ >= cfg::timing::kSensorRefreshMs);
+            if (publish_due)
             {
-                if (persistBsecState())
+                publishSnapshot(now_ms);
+                last_publish_ms_ = now_ms;
+            }
+
+            const uint8_t latest_accuracy = live_.iaq_accuracy;
+
+            if ((latest_accuracy > last_saved_accuracy_) ||
+                (now_ms - last_state_save_ms_ >= cfg::timing::kBsecStateSaveMs))
+            {
+                if (now_ms - last_state_save_ms_ >= cfg::timing::kBsecStateSaveMinGapMs)
                 {
-                    last_state_save_ms_ = now_ms;
-                    last_saved_accuracy_ = live_.iaq_accuracy;
+                    if (persistBsecState())
+                    {
+                        last_state_save_ms_ = now_ms;
+                        last_saved_accuracy_ = latest_accuracy;
+                    }
                 }
             }
 
             maybeRecoverStuckIaq(now_ms);
+            if (!healthy_)
+            {
+                vTaskDelay(wait_ticks);
+                continue;
+            }
         }
 
         if ((last_sample_ms_ != 0U) && (now_ms - last_sample_ms_ > stale_reinit_ms_))
@@ -985,18 +1023,6 @@ void SensorManager::taskLoop()
             healthy_ = false;
             vTaskDelay(wait_ticks);
             continue;
-        }
-
-        if (now_ms - last_state_save_ms_ >= cfg::timing::kBsecStateSaveMs)
-        {
-            if (persistBsecState())
-            {
-                last_state_save_ms_ = now_ms;
-                if (live_.iaq_accuracy > last_saved_accuracy_)
-                {
-                    last_saved_accuracy_ = live_.iaq_accuracy;
-                }
-            }
         }
 
         vTaskDelay(wait_ticks);

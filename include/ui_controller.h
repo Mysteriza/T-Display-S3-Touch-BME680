@@ -56,7 +56,6 @@ private:
         lv_obj_t *iaq_arc = nullptr;
         lv_obj_t *iaq_number = nullptr;
         lv_obj_t *iaq_status = nullptr;
-        lv_obj_t *iaq_risk = nullptr;
         lv_obj_t *temp = nullptr;
         lv_obj_t *humidity = nullptr;
     };
@@ -71,9 +70,7 @@ private:
     struct IaqDescriptor
     {
         const char *status;
-        const char *risk;
         uint32_t status_color;
-        uint32_t risk_color;
     };
 
     static void displayFlushCallback(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p);
@@ -104,8 +101,7 @@ private:
     lv_color_t blendHexColors(uint32_t from_hex, uint32_t to_hex, uint8_t mix_255) const;
     lv_color_t batteryColorFromPercent(uint8_t percent, bool usb_power) const;
 
-    uint8_t estimateCpuLoadPercent(uint32_t now_ms);
-    IaqDescriptor describeIaqRisk(int32_t iaq_value, const struct SensorData &data) const;
+    IaqDescriptor describeIaqStatus(int32_t iaq_value) const;
 
     void formatUptime(char *out, size_t out_len, uint32_t uptime_seconds) const;
     int32_t clampI32(int32_t value, int32_t low, int32_t high) const;

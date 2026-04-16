@@ -1,6 +1,7 @@
 #include "ui_controller.h"
 
 #include <Wire.h>
+#include <esp32-hal-cpu.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <math.h>
@@ -151,51 +152,9 @@ lv_color_t UiController::batteryColorFromPercent(uint8_t percent, bool usb_power
     return lv_color_hex(stops_color[stop_count - 1U]);
 }
 
-uint8_t UiController::estimateCpuLoadPercent(uint32_t now_ms)
-{
-    static uint32_t prev_heap_free = 0;
-    static uint8_t smoothed = 0;
-
-    const uint32_t heap_free = ESP.getFreeHeap();
-    const uint32_t heap_total = ESP.getHeapSize();
-
-    uint32_t heap_used_pct = 0;
-    if (heap_total > 0U)
-    {
-        heap_used_pct = (100UL * (heap_total - heap_free)) / heap_total;
-    }
-
-    uint32_t heap_delta = 0;
-    if (prev_heap_free != 0U)
-    {
-        heap_delta = (heap_free > prev_heap_free) ? (heap_free - prev_heap_free) : (prev_heap_free - heap_free);
-    }
-    prev_heap_free = heap_free;
-
-    const uint32_t churn_term = (heap_delta > 2048U) ? 20U : (heap_delta / 100U);
-    const uint32_t wave_term = (now_ms / 1000UL) % 7UL;
-
-    const int32_t instant = clampI32(static_cast<int32_t>(8U + (heap_used_pct / 2U) + churn_term + wave_term), 5, 95);
-    if (smoothed == 0U)
-    {
-        smoothed = static_cast<uint8_t>(instant);
-    }
-    else
-    {
-        smoothed = static_cast<uint8_t>((3U * smoothed + static_cast<uint8_t>(instant)) / 4U);
-    }
-    return smoothed;
-}
-
-UiController::IaqDescriptor UiController::describeIaqRisk(int32_t iaq_value, const SensorData &data) const
+UiController::IaqDescriptor UiController::describeIaqStatus(int32_t iaq_value) const
 {
     const int32_t bounded_iaq = clampI32(iaq_value, 0, 500);
-    const uint8_t acc = (data.iaq_accuracy > 3U) ? 3U : data.iaq_accuracy;
-
-    const bool runin_known = isfinite(data.run_in_status);
-    const bool stab_known = isfinite(data.stabilization_status);
-    const bool calibrating = (acc == 0U) && runin_known && stab_known &&
-                             ((data.run_in_status < 1.0f) || (data.stabilization_status < 1.0f));
 
     uint32_t status_color = cfg::color::kError;
     const char *status = "Hazardous";
@@ -225,93 +184,7 @@ UiController::IaqDescriptor UiController::describeIaqRisk(int32_t iaq_value, con
         status_color = cfg::color::kError;
     }
 
-    int32_t risk_score = bounded_iaq;
-    if (acc == 0U)
-    {
-        risk_score += 45;
-    }
-    else if (acc == 1U)
-    {
-        risk_score += 25;
-    }
-    else if (acc == 2U)
-    {
-        risk_score += 10;
-    }
-
-    if (isfinite(data.run_in_status) && data.run_in_status < 1.0f)
-    {
-        risk_score += 15;
-    }
-    if (isfinite(data.stabilization_status) && data.stabilization_status < 1.0f)
-    {
-        risk_score += 10;
-    }
-
-    if (isfinite(data.humidity_pct))
-    {
-        if (data.humidity_pct < 35.0f)
-        {
-            risk_score += static_cast<int32_t>(lroundf((35.0f - data.humidity_pct) * 1.5f));
-        }
-        else if (data.humidity_pct > 65.0f)
-        {
-            risk_score += static_cast<int32_t>(lroundf((data.humidity_pct - 65.0f) * 1.5f));
-        }
-    }
-
-    if (isfinite(data.temperature_c))
-    {
-        if (data.temperature_c < 18.0f)
-        {
-            risk_score += static_cast<int32_t>(lroundf((18.0f - data.temperature_c) * 1.2f));
-        }
-        else if (data.temperature_c > 30.0f)
-        {
-            risk_score += static_cast<int32_t>(lroundf((data.temperature_c - 30.0f) * 1.2f));
-        }
-    }
-
-    if (isfinite(data.gas_resistance_kohm))
-    {
-        if (data.gas_resistance_kohm < 8.0f)
-        {
-            risk_score += 20;
-        }
-        else if (data.gas_resistance_kohm < 15.0f)
-        {
-            risk_score += 10;
-        }
-    }
-
-    risk_score = clampI32(risk_score, 0, 500);
-
-    if (calibrating)
-    {
-        return {status, "Calibrating", status_color, cfg::color::kBootChecking};
-    }
-
-    if (risk_score <= 60)
-    {
-        return {status, "Very Low", status_color, cfg::color::kStatusOk};
-    }
-    if (risk_score <= 120)
-    {
-        return {status, "Low", status_color, cfg::color::kStatusOk};
-    }
-    if (risk_score <= 180)
-    {
-        return {status, "Medium", status_color, cfg::color::kBootChecking};
-    }
-    if (risk_score <= 260)
-    {
-        return {status, "Elevated", status_color, cfg::color::kBootChecking};
-    }
-    if (risk_score <= 340)
-    {
-        return {status, "High", status_color, cfg::color::kError};
-    }
-    return {status, "Very High", status_color, cfg::color::kError};
+    return {status, status_color};
 }
 
 bool UiController::probeTouchAddress(uint8_t address)
@@ -636,7 +509,7 @@ void UiController::buildPageAqi(lv_obj_t *parent)
 
     page_aqi_.accuracy = lv_label_create(parent);
     lv_label_set_text(page_aqi_.accuracy, "Accuracy\n-");
-    lv_obj_set_style_text_color(page_aqi_.accuracy, lv_color_hex(cfg::color::kStatusOk), 0);
+    lv_obj_set_style_text_color(page_aqi_.accuracy, lv_color_hex(cfg::color::kBootChecking), 0);
     lv_obj_set_style_text_font(page_aqi_.accuracy, &lv_font_montserrat_14, 0);
     lv_obj_align(page_aqi_.accuracy, LV_ALIGN_LEFT_MID, 8, 34);
 
@@ -674,13 +547,7 @@ void UiController::buildPageAqi(lv_obj_t *parent)
     lv_label_set_text(page_aqi_.iaq_status, "Status\n-");
     lv_obj_set_style_text_font(page_aqi_.iaq_status, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(page_aqi_.iaq_status, lv_color_hex(cfg::color::kStatusOk), 0);
-    lv_obj_align(page_aqi_.iaq_status, LV_ALIGN_RIGHT_MID, -8, -24);
-
-    page_aqi_.iaq_risk = lv_label_create(parent);
-    lv_label_set_text(page_aqi_.iaq_risk, "Risk\n-");
-    lv_obj_set_style_text_font(page_aqi_.iaq_risk, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(page_aqi_.iaq_risk, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_align(page_aqi_.iaq_risk, LV_ALIGN_RIGHT_MID, -8, 34);
+    lv_obj_align(page_aqi_.iaq_status, LV_ALIGN_RIGHT_MID, -8, -8);
 
     page_aqi_.temp = lv_label_create(parent);
     lv_label_set_text(page_aqi_.temp, "--.- C");
@@ -714,7 +581,7 @@ void UiController::buildPageSys(lv_obj_t *parent)
                                          98,
                                          cfg::display::kCardWidth,
                                          64,
-                                         LV_SYMBOL_SETTINGS " CPU Load",
+                                         LV_SYMBOL_SETTINGS " CPU Freq",
                                          &page_sys_.cpu_load,
                                          &lv_font_montserrat_22);
     (void)cpu_card;
@@ -729,7 +596,7 @@ void UiController::buildPageSys(lv_obj_t *parent)
                                              &lv_font_montserrat_18);
     (void)storage_card;
 
-    lv_label_set_text(page_sys_.cpu_load, "0%");
+    lv_label_set_text(page_sys_.cpu_load, "0 MHz");
     lv_label_set_text(page_sys_.storage, "--/-- MB");
 }
 
@@ -981,6 +848,13 @@ void UiController::updateValues()
 
     SensorManager &sensor_manager = SensorManager::instance();
     const SensorData data = sensor_manager.getData();
+    uint32_t data_age_ms = UINT32_MAX;
+    if (data.last_update_ms != 0U)
+    {
+        data_age_ms = now_ms - data.last_update_ms;
+    }
+    const uint32_t hold_window_ms = cfg::timing::kSensorStaleReinitMs + cfg::timing::kSensorLinkProbeMs;
+    const bool hold_recent_snapshot = (data.last_update_ms != 0U) && (data_age_ms <= hold_window_ms);
 
     const bool sensor_connected_now = sensor_manager.isRealtimeConnected();
     const lv_color_t header_color = sensor_connected_now ? lv_color_hex(cfg::color::kValue) : lv_color_hex(cfg::color::kError);
@@ -994,7 +868,7 @@ void UiController::updateValues()
 
     char text[64] = {0};
 
-    if (data.valid)
+    if (data.valid || hold_recent_snapshot)
     {
         snprintf(text, sizeof(text), "%.2f C", data.temperature_c);
         lv_label_set_text(page_env_.temp, text);
@@ -1023,7 +897,17 @@ void UiController::updateValues()
         const char *acc_text = (acc_level == 0U) ? "Very Low" : (acc_level == 1U) ? "Low"
                                                             : (acc_level == 2U)   ? "Medium"
                                                                                   : "High";
+        uint32_t acc_color = cfg::color::kError;
+        if (acc_level == 2U)
+        {
+            acc_color = cfg::color::kBootChecking;
+        }
+        else if (acc_level >= 3U)
+        {
+            acc_color = cfg::color::kStatusOk;
+        }
         lv_label_set_text_fmt(page_aqi_.accuracy, "Accuracy\n%s", acc_text);
+        lv_obj_set_style_text_color(page_aqi_.accuracy, lv_color_hex(acc_color), 0);
 
         float iaq_display = data.iaq;
         if (!isfinite(iaq_display) && isfinite(data.iaq_static))
@@ -1047,18 +931,43 @@ void UiController::updateValues()
         iaq_value = clampI32(iaq_value, 0, 500);
         lv_arc_set_value(page_aqi_.iaq_arc, iaq_value);
 
-        const IaqDescriptor descriptor = describeIaqRisk(iaq_value, data);
-        lv_label_set_text_fmt(page_aqi_.iaq_status, "Status\n%s", descriptor.status);
-        lv_label_set_text_fmt(page_aqi_.iaq_risk, "Risk\n%s", descriptor.risk);
-        lv_obj_set_style_arc_color(page_aqi_.iaq_arc, lv_color_hex(descriptor.status_color), LV_PART_INDICATOR);
-        lv_obj_set_style_text_color(page_aqi_.iaq_status, lv_color_hex(descriptor.status_color), 0);
-        lv_obj_set_style_text_color(page_aqi_.iaq_risk, lv_color_hex(descriptor.risk_color), 0);
+        if (isfinite(iaq_display))
+        {
+            const IaqDescriptor descriptor = describeIaqStatus(iaq_value);
+            lv_label_set_text_fmt(page_aqi_.iaq_status, "Status\n%s", descriptor.status);
+            lv_obj_set_style_arc_color(page_aqi_.iaq_arc, lv_color_hex(descriptor.status_color), LV_PART_INDICATOR);
+            lv_obj_set_style_text_color(page_aqi_.iaq_status, lv_color_hex(descriptor.status_color), 0);
+        }
+        else
+        {
+            lv_label_set_text(page_aqi_.iaq_status, "Status\nNo Data");
+            lv_obj_set_style_arc_color(page_aqi_.iaq_arc, lv_color_hex(cfg::color::kBootChecking), LV_PART_INDICATOR);
+            lv_obj_set_style_text_color(page_aqi_.iaq_status, lv_color_hex(cfg::color::kBootChecking), 0);
+        }
 
         snprintf(text, sizeof(text), "%.2f C", data.temperature_c);
         lv_label_set_text(page_aqi_.temp, text);
 
         snprintf(text, sizeof(text), "%.2f %%", data.humidity_pct);
         lv_label_set_text(page_aqi_.humidity, text);
+    }
+    else
+    {
+        lv_label_set_text(page_env_.temp, "--.- C");
+        lv_label_set_text(page_env_.humidity, "--.- %");
+        lv_label_set_text(page_env_.pressure, "----.-- hPa");
+        lv_label_set_text(page_env_.altitude, "---.- m");
+
+        lv_label_set_text(page_aqi_.gas, "Gas res.\n-- kOhm");
+        lv_label_set_text(page_aqi_.accuracy, "Accuracy\n-");
+        lv_obj_set_style_text_color(page_aqi_.accuracy, lv_color_hex(cfg::color::kBootChecking), 0);
+        lv_label_set_text(page_aqi_.iaq_number, "--");
+        lv_label_set_text(page_aqi_.iaq_status, "Status\nNo Data");
+        lv_obj_set_style_arc_color(page_aqi_.iaq_arc, lv_color_hex(cfg::color::kBootChecking), LV_PART_INDICATOR);
+        lv_obj_set_style_text_color(page_aqi_.iaq_status, lv_color_hex(cfg::color::kBootChecking), 0);
+        lv_arc_set_value(page_aqi_.iaq_arc, 0);
+        lv_label_set_text(page_aqi_.temp, "--.- C");
+        lv_label_set_text(page_aqi_.humidity, "--.- %");
     }
 
     char uptime[16] = {0};
@@ -1071,8 +980,8 @@ void UiController::updateValues()
     if ((last_cpu_refresh_ms_ == 0U) || (now_ms - last_cpu_refresh_ms_ >= cfg::timing::kCpuLoadRefreshMs))
     {
         last_cpu_refresh_ms_ = now_ms;
-        const uint8_t cpu_est = estimateCpuLoadPercent(now_ms);
-        lv_label_set_text_fmt(page_sys_.cpu_load, "%u %%", cpu_est);
+        const int32_t cpu_freq_mhz = getCpuFrequencyMhz();
+        lv_label_set_text_fmt(page_sys_.cpu_load, "%ld MHz", static_cast<long>(cpu_freq_mhz));
     }
 
     if ((last_sys_info_refresh_ms_ == 0U) || (now_ms - last_sys_info_refresh_ms_ >= cfg::timing::kSysInfoRefreshMs))

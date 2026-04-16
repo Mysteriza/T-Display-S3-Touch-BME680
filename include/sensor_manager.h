@@ -133,6 +133,7 @@ private:
 private:
     mutable SemaphoreHandle_t sensor_mutex_ = nullptr;
     SensorData sensor_data_{};
+    SensorData last_safe_snapshot_{};
     LiveReadings live_{};
 
     Bsec2 bsec_;

@@ -44,24 +44,24 @@ namespace cfg
         inline constexpr uint32_t kDisplayTimeoutMs = 10000UL;
         inline constexpr uint32_t kButtonDebounceMs = 120UL;
 
+        inline constexpr uint32_t kSensorRefreshMs = 30000UL;
+        inline constexpr uint32_t kSensorStaleReinitMs = kSensorRefreshMs + 5000UL;
+
         inline constexpr uint32_t kUiTaskActiveDelayMs = 16UL;
         inline constexpr uint32_t kUiTaskSleepDelayMs = 120UL;
-        inline constexpr uint32_t kUiBackgroundRefreshMs = 1000UL;
+        inline constexpr uint32_t kUiBackgroundRefreshMs = kSensorRefreshMs;
 
         inline constexpr uint32_t kSensorTaskDelayMs = 200UL;
         inline constexpr uint32_t kSensorInitRetryMs = 1000UL;
         inline constexpr uint32_t kSensorLinkProbeMs = 5000UL;
 
-        inline constexpr uint32_t kSensorRefreshMs = 30000UL;
-        inline constexpr uint32_t kSensorStaleReinitMs = kSensorRefreshMs + 5000UL;
-
-        inline constexpr uint32_t kBsecStateSaveMs = 24UL * 60UL * 60UL * 1000UL;
-        inline constexpr uint32_t kBsecStateSaveMinGapMs = 10UL * 60UL * 1000UL;
+        inline constexpr uint32_t kBsecStateSaveMs = 4UL * 60UL * 60UL * 1000UL; // 4 Hours
+        inline constexpr uint32_t kBsecStateSaveMinGapMs = 10UL * 60UL * 1000UL; // 10 Minutes
         inline constexpr uint32_t kIaqStuckTimeoutMs = 20UL * 60UL * 1000UL;
 
-        inline constexpr uint32_t kCpuLoadRefreshMs = 2000UL;
-        inline constexpr uint32_t kSysInfoRefreshMs = 5000UL;
-        inline constexpr uint32_t kUiValuesRefreshMs = 500UL;
+        inline constexpr uint32_t kCpuLoadRefreshMs = kSensorRefreshMs;
+        inline constexpr uint32_t kSysInfoRefreshMs = kSensorRefreshMs;
+        inline constexpr uint32_t kUiValuesRefreshMs = kSensorRefreshMs;
     }
 
     namespace display
@@ -112,9 +112,8 @@ namespace cfg
         inline constexpr float kSeaLevelMaxHpa = 1100.0f;
         inline constexpr float kKnownAltitudeMinM = -500.0f;
         inline constexpr float kKnownAltitudeMaxM = 9000.0f;
-
         inline constexpr float kIaqStuckTarget = 50.0f;
-        inline constexpr float kIaqStuckTolerance = 1.5f;
+        inline constexpr float kIaqStuckTolerance = 2.0f;
     }
 
     namespace color
