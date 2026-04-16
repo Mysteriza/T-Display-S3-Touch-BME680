@@ -5,6 +5,10 @@
 
 Offline environmental monitor firmware for LilyGO T-Display-S3 with BME680/BME688 and Bosch BSEC2.
 
+## Design Prototype
+
+![UI Design Prototype](UI%20Design%20Prototype.png)
+
 ## Features
 
 - Fully offline operation (no cloud, no Wi-Fi required).
