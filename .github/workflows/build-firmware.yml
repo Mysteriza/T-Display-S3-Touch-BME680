@@ -1,0 +1,76 @@
+name: Build Firmware
+
+on:
+  push:
+    branches-ignore:
+      - "main"
+      - "master"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio esptool
+
+      - name: Build firmware
+        run: platformio run -e lilygo-t-display-s3
+
+      - name: Prepare output directory
+        run: |
+          mkdir -p output
+          cp .pio/build/lilygo-t-display-s3/firmware.bin output/firmware-app.bin
+          cp .pio/build/lilygo-t-display-s3/bootloader.bin output/bootloader.bin
+          cp .pio/build/lilygo-t-display-s3/partitions.bin output/partitions.bin
+
+      - name: Merge flash image
+        run: |
+          python -m esptool --chip esp32s3 merge_bin \
+            --flash_mode dio \
+            --flash_freq 80m \
+            --flash_size 16MB \
+            -o output/firmware-merged.bin \
+            0x0 .pio/build/lilygo-t-display-s3/bootloader.bin \
+            0x8000 .pio/build/lilygo-t-display-s3/partitions.bin \
+            0x10000 .pio/build/lilygo-t-display-s3/firmware.bin
+
+      - name: Write flash notes
+        run: |
+          cat > output/FLASHING.txt << 'EOF'
+          Flash-ready files:
+          - firmware-merged.bin  (recommended for end users, write at 0x0)
+          - firmware-app.bin     (application only, write at 0x10000)
+          - bootloader.bin       (offset 0x0)
+          - partitions.bin       (offset 0x8000)
+
+          Example (merged image):
+          esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 firmware-merged.bin
+          EOF
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: t-display-s3-firmware
+          path: output/
+          retention-days: 14

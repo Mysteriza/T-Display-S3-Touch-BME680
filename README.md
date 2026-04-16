@@ -1,214 +1,193 @@
 # T-Display-S3 Touch BME680 Monitor
 
+[![Build Firmware](https://github.com/Mysteriza/T-Display-S3-Touch-BME680/actions/workflows/build-firmware.yml/badge.svg)](https://github.com/Mysteriza/T-Display-S3-Touch-BME680/actions/workflows/build-firmware.yml)
+[![Release Firmware](https://github.com/Mysteriza/T-Display-S3-Touch-BME680/actions/workflows/release-firmware.yml/badge.svg)](https://github.com/Mysteriza/T-Display-S3-Touch-BME680/actions/workflows/release-firmware.yml)
+
 Offline environmental monitor firmware for LilyGO T-Display-S3 with BME680/BME688 and Bosch BSEC2.
-
-This document uses English only and documents direct GPIO I2C wiring as the primary user wiring method.
-
-## Design Prototype
-
-![UI Design](UI%20Design%20Prototype.png)
 
 ## Features
 
-- Fully offline operation (no Wi-Fi required).
-- Boot self-check for LCD, touch controller, and sensor.
-- LVGL UI (320x170 landscape) with left/right swipe navigation.
-- Live values for temperature, humidity, pressure, derived altitude, gas resistance, IAQ, and IAQ accuracy.
-- Smart backlight timeout (default 15 seconds), wake by GPIO14 button when display is off.
-- BSEC state persistence to NVS every 24 hours.
-- Runtime calibration commands (`set slp`, `set alt`) with immediate altitude update.
-- Quiet serial monitor by default (detailed debug is opt-in).
-- Stabilized battery percentage display using ADC averaging + filtering + hysteresis.
-- Dynamic CPU frequency scaling: high frequency while display is on, reduced frequency while display is off.
-- Touch controller enters sleep when display is off and wakes when GPIO14 wake button turns display on.
-- Lower UI task activity while display is off to reduce power without stopping sensor updates.
-- Timeout wake button is handled on press edge only (active-low) with debounce to avoid false wake/reset events.
-- Header connectivity indicator:
-  - Env_monitor text is driven by realtime physical BME68x link probing (chip-ID verified).
-  - Disconnect/reconnect is debounced in the sensor task and reflected on UI in about 1 second.
-  - Short transient glitches are filtered to avoid false color flicker.
+- Fully offline operation (no cloud, no Wi-Fi required).
+- Live measurements: temperature, humidity, pressure, altitude, gas resistance, IAQ.
+- IAQ calibration visibility: IAQ level, IAQ accuracy, run-in status, stabilization status.
+- Boot self-check for display, touch, and sensor.
+- LVGL UI with swipe pages.
+- Smart backlight timeout + wake button.
+- Automatic sensor recovery if data becomes stale.
+- BSEC state save/restore so calibration can continue across reboots.
+- Serial command interface for calibration and diagnostics.
 
-## Required Hardware
+## What This Firmware Does
 
-- LilyGO T-Display-S3 (touch variant).
-- BME680/BME688 module (I2C).
-- Jumper wires for direct GPIO I2C wiring.
-- USB-C cable.
-- PC with Visual Studio Code and PlatformIO extension.
+The firmware runs two core loops:
 
-## Sensor Wiring (Primary: GPIO I2C)
+- Sensor loop: reads BME68x through BSEC2 scheduler, updates IAQ pipeline, and publishes fresh snapshots.
+- UI loop: renders values on screen and handles touch/wake behavior.
 
-Use direct GPIO wiring between the board and the sensor.
+IAQ stability logic includes:
 
-### 1. Connect Sensor to GPIO I2C
+- Scheduler-aware BSEC run handling (no false reinit from normal no-output cycles).
+- Fresh-sample publish path so IAQ updates appear as soon as BSEC emits data.
+- Adaptive stale timeout and automatic reinitialization when sensor data is truly stale.
+- Accuracy-aware reporting so users can see calibration progress from 0 to 3.
 
-| BME680/BME688 Pin | T-Display-S3 Pin         |
-| ----------------- | ------------------------ |
-| VCC               | 3V3                      |
-| GND               | GND                      |
-| SDA               | GPIO18                   |
-| SCL               | GPIO17                   |
-| CS/CSB            | 3V3                      |
-| SDO/ADDR          | GND (0x76) or 3V3 (0x77) |
+## Hardware
 
-### 2. Bus Preference in Firmware
+- LilyGO T-Display-S3 (touch version)
+- BME680 or BME688 module (I2C)
+- USB-C cable
+- Jumper wires
 
-For current hardware setup, the primary and recommended wiring is:
+## Wiring
 
-- Main bus: SDA GPIO18, SCL GPIO17.
+| Sensor   | T-Display-S3             |
+| -------- | ------------------------ |
+| VCC      | 3V3                      |
+| GND      | GND                      |
+| SDA      | GPIO18                   |
+| SCL      | GPIO17                   |
+| CS/CSB   | 3V3                      |
+| SDO/ADDR | GND (0x76) or 3V3 (0x77) |
 
-Firmware probes MAIN bus first (GPIO18/GPIO17), then falls back to ALT bus for compatibility.
+## Installation
 
-### 3. Sensor I2C Address Notes
+### Option A - Build and Upload from Source (PlatformIO)
 
-Valid BME68x addresses:
-
-- 0x76
-- 0x77
-
-Firmware auto-detects both addresses at initialization.
-
-For modules exposing CS/SDO jumpers:
-
-- CS/CSB must be HIGH (3V3) for I2C mode.
-- SDO usually selects address (GND -> 0x76, 3V3 -> 0x77).
-
-### 4. GPIO Wiring Verification Steps
-
-After firmware upload:
-
-1. Open serial monitor at 115200.
-2. Run `status`.
-3. Confirm sensor status is `OK` and bus/address are reported.
-4. Run `i2c scan` and confirm 0x76/0x77 is visible on main bus.
-
-If `status` is not valid immediately after boot, wait until the first BSEC sample is produced.
-
-## Build and Upload
-
-Run commands from project root.
-
-### Build
+1. Install Visual Studio Code.
+2. Install PlatformIO extension in VS Code.
+3. Open this project folder.
+4. Connect board with USB.
+5. Build:
 
 ```bash
 platformio run -e lilygo-t-display-s3
 ```
 
-### Upload
+6. Upload:
 
 ```bash
 platformio run -e lilygo-t-display-s3 -t upload
 ```
 
-### Upload to specific port
+7. If needed, specify port:
 
 ```bash
-platformio run -e lilygo-t-display-s3 -t upload --upload-port COMx
+platformio run -e lilygo-t-display-s3 -t upload --upload-port COM5
 ```
 
-## Serial Monitor and Commands
+### Option B - Install from Prebuilt .bin (GitHub Actions Artifact)
 
-### Open serial monitor
+This repository includes CI workflow:
+
+- Workflow file: `.github/workflows/build-firmware.yml`
+- Trigger: pull request, non-main push, or manual run
+- Artifact name: `t-display-s3-firmware`
+- Artifact contents:
+  - `firmware-merged.bin` (recommended for end users, flash at 0x0)
+  - `firmware-app.bin` (app only, flash at 0x10000)
+  - `bootloader.bin` (0x0)
+  - `partitions.bin` (0x8000)
+
+#### Beginner Flashing Steps (Windows)
+
+1. Open GitHub repository page.
+2. Open Actions tab.
+3. Open the latest successful "Build Firmware" run.
+4. Download artifact `t-display-s3-firmware`.
+5. Extract ZIP to a folder, for example `C:\firmware`.
+6. Install Python 3 from https://www.python.org/downloads/.
+7. Open PowerShell.
+8. Install esptool:
+
+```powershell
+py -m pip install --upgrade pip
+py -m pip install esptool
+```
+
+9. Find board COM port from Device Manager (for example COM5).
+10. In PowerShell, go to extracted folder:
+
+```powershell
+cd C:\firmware
+```
+
+11. Flash merged binary:
+
+```powershell
+py -m esptool --chip esp32s3 --port COM5 --baud 460800 write_flash 0x0 firmware-merged.bin
+```
+
+12. Wait until process shows success and board reboots.
+13. Open serial monitor at 115200 to verify startup.
+
+If flashing fails:
+
+- Hold BOOT button while connecting USB, then run flash command again.
+- Verify COM port is not used by another serial monitor.
+
+### Option C - Install from GitHub Release (Recommended for End Users)
+
+For end users, this is the easiest path because firmware is already built and tagged:
+
+1. Open repository page on GitHub.
+2. Open **Releases**.
+3. Download latest `firmware-merged.bin` from latest version tag.
+4. Flash at offset `0x0`.
+
+Example command:
+
+```powershell
+py -m esptool --chip esp32s3 --port COM5 --baud 460800 write_flash 0x0 firmware-merged.bin
+```
+
+## Usage
+
+- Power on board.
+- Wait for self-check to complete.
+- Swipe left/right to change pages.
+- Device keeps collecting data even when display backlight is off.
+- Press wake button (GPIO14 path) to turn display back on.
+
+### IAQ Accuracy Meaning
+
+- 0: Very Low (initial warm-up)
+- 1: Low
+- 2: Medium
+- 3: High (calibrated)
+
+For best IAQ results, keep device powered continuously during first calibration period.
+
+## Serial Commands
+
+Open monitor:
 
 ```bash
 platformio device monitor -b 115200
 ```
 
-### Logging modes
+| Command            | Description                                                    |
+| ------------------ | -------------------------------------------------------------- |
+| `help`             | Show command list                                              |
+| `status`           | Show sensor, IAQ, accuracy, calibration, and connection status |
+| `get slp`          | Show current sea-level pressure setting                        |
+| `set slp <hPa>`    | Set sea-level pressure manually                                |
+| `set alt <meter>`  | Set known altitude to auto-adjust sea-level pressure           |
+| `reset slp`        | Reset sea-level pressure to default                            |
+| `sensor reinit`    | Force sensor/BSEC reinitialization                             |
+| `i2c scan`         | Scan I2C bus and show detected devices                         |
+| `debug detail on`  | Enable verbose periodic debug output                           |
+| `debug detail off` | Disable verbose periodic debug output                          |
 
-- Default: quiet (no periodic detailed debug spam).
-- Enable detailed debug: `debug detail on`
-- Disable detailed debug: `debug detail off`
+## Quick Troubleshooting
 
-### Command list
-
-- `help`
-- `status`
-- `get slp`
-- `set slp <hPa>`
-- `set alt <meter>`
-- `reset slp`
-- `sensor reinit`
-- `i2c scan`
-- `debug detail on`
-- `debug detail off`
-
-Command behavior notes:
-
-- Commands run on Enter.
-- If a terminal does not send CR/LF, commands auto-run after a short idle timeout.
-- `set slp` and `set alt` immediately refresh displayed altitude from the latest pressure snapshot.
-
-## Runtime Behavior
-
-- Boot self-check starts with Checking (yellow), then updates each item to OK (green) or Fail (red).
-- UI starts on page 1 and supports three swipe pages.
-- Backlight timeout default: 15000 ms.
-- When display is ON: touch works for swipe navigation and keeps activity alive.
-- When display is OFF: touch input is ignored and touch controller is put into sleep mode.
-- GPIO14 wake button is the only wake source for the display timeout path.
-- When GPIO14 wakes the display, the touch controller is reactivated.
-- Sensor task runs separately (FreeRTOS) and retries initialization on failure.
-- If sensor data becomes stale for too long, firmware schedules automatic sensor re-initialization.
-- Transient single-cycle BSEC run failures are filtered before forcing re-initialization.
-- BSEC scheduler-aware run handling: normal no-output cycles no longer trigger false sensor re-init loops.
-- IAQ pipeline subscribes to IAQ, Static IAQ, Run-In, and Stabilization outputs for better calibration observability.
-- UI loop is throttled while display is off, while sensor sampling continues in the background.
-
-## Main Configuration
-
-Common settings in include/config.h:
-
-- `DISPLAY_TIMEOUT` (default 15000 ms)
-- `SENSOR_REFRESH` (default 60000 ms)
-- `CPU_FREQ_ACTIVE_MHZ` (default 240)
-- `CPU_FREQ_SLEEP_MHZ` (default 80)
-- `PIN_I2C_SDA` (default 18)
-- `PIN_I2C_SCL` (default 17)
-
-Sea-level pressure calibration is stored in NVS namespace `sensorcfg` with key `slp_hpa`.
-
-## Project Structure
-
-- include/config.h: pins, timing, color constants.
-- include/sensors.h + src/sensors.cpp: BSEC2 pipeline, sensor snapshot, serial commands, persistent state/config.
-- include/ui_pages.h + src/ui_pages.cpp: LVGL display/touch initialization and page rendering.
-- include/power_mgmt.h + src/power_mgmt.cpp: backlight timeout and wake logic.
-- src/main.cpp: boot flow, self-check, task startup.
-- platformio.ini: board/environment/dependency configuration.
-
-## Sensor Troubleshooting
-
-### Sensor not detected
-
-- Confirm SDA/SCL are connected to GPIO18/GPIO17.
-- Confirm the module is BME680/BME688 (CHIP_ID must be 0x61).
-- Run `i2c scan` and verify 0x76 or 0x77 appears.
-- Run `sensor reinit` to force re-detection without reboot.
-
-### Altitude value looks wrong
-
-- Run `set slp <hPa>` using local sea-level pressure, or
-- Run `set alt <meter>` using known local elevation.
-- Re-check with `status`.
-
-### IAQ / Accuracy stays low or IAQ looks flat
-
-- Keep the board powered continuously; gas calibration needs warm-up time and stable operation.
-- Verify with `status` that `runin` and `stab` progress and IAQ accuracy (`acc`) increases over time.
-- If IAQ or accuracy appears stuck, run `sensor reinit` once and observe `status` for 2-5 minutes.
-- Ensure sensor is not repeatedly disconnecting/reconnecting on I2C (check `i2c scan` output).
-
-### Serial monitor is too noisy
-
-- Use `debug detail off`.
-
-## Dependencies
-
-Managed in platformio.ini:
-
-- lvgl/lvgl@8.3.11
-- bodmer/TFT_eSPI@2.5.43
-- Bosch BSEC2 Library
-- Bosch BME68x Library
-- lewisxhe/SensorLib
+- Sensor not detected:
+  - Check SDA/SCL wiring (GPIO18/GPIO17).
+  - Confirm address 0x76 or 0x77 via `i2c scan`.
+- IAQ accuracy stays low:
+  - Keep device running longer (calibration requires time).
+  - Check `status` for `runin` and `stab` progression.
+- IAQ appears flat:
+  - Verify environment is actually changing (airflow, VOC source, humidity/temperature changes).
+  - Run `sensor reinit` once, then monitor `status` for several minutes.
+- Altitude incorrect:
+  - Use `set slp <hPa>` or `set alt <meter>`.

@@ -1,0 +1,157 @@
+name: Release Firmware
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio esptool
+
+      - name: Build firmware
+        run: platformio run -e lilygo-t-display-s3
+
+      - name: Prepare release files
+        run: |
+          mkdir -p output
+          cp .pio/build/lilygo-t-display-s3/firmware.bin output/firmware-app.bin
+          cp .pio/build/lilygo-t-display-s3/bootloader.bin output/bootloader.bin
+          cp .pio/build/lilygo-t-display-s3/partitions.bin output/partitions.bin
+
+      - name: Merge flash image
+        run: |
+          python -m esptool --chip esp32s3 merge_bin \
+            --flash_mode dio \
+            --flash_freq 80m \
+            --flash_size 16MB \
+            -o output/firmware-merged.bin \
+            0x0 .pio/build/lilygo-t-display-s3/bootloader.bin \
+            0x8000 .pio/build/lilygo-t-display-s3/partitions.bin \
+            0x10000 .pio/build/lilygo-t-display-s3/firmware.bin
+
+      - name: Build release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_tag_on_head="$(git tag --points-at HEAD 'v[0-9]*.[0-9]*.[0-9]*' | head -n1 || true)"
+
+          if [[ -n "${current_tag_on_head}" ]]; then
+            next_tag="${current_tag_on_head}"
+            previous_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -vx "${next_tag}" | head -n1 || true)"
+          else
+            latest_tag="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1 || true)"
+
+            if [[ -z "${latest_tag}" ]]; then
+              next_tag="v0.1.0"
+              previous_tag=""
+            else
+              version="${latest_tag#v}"
+              IFS='.' read -r major minor patch <<< "${version}"
+              patch=$((patch + 1))
+              next_tag="v${major}.${minor}.${patch}"
+              previous_tag="${latest_tag}"
+            fi
+          fi
+
+          if [[ -n "${previous_tag}" ]]; then
+            commit_lines="$(git log --pretty='- %s (%h)' ${previous_tag}..HEAD)"
+          else
+            commit_lines="$(git log --pretty='- %s (%h)')"
+          fi
+
+          if [[ -z "${commit_lines}" ]]; then
+            commit_lines='- No commit messages found.'
+          fi
+
+          {
+            echo "next_tag=${next_tag}"
+            echo "previous_tag=${previous_tag}"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "# Firmware ${next_tag}"
+            echo
+            if [[ -n "${previous_tag}" ]]; then
+              echo "Changes since ${previous_tag}:"
+            else
+              echo "Initial release changes:"
+            fi
+            echo
+            echo "${commit_lines}"
+            echo
+            echo "Assets included:"
+            echo "- firmware-merged.bin (flash at 0x0)"
+            echo "- firmware-app.bin (flash at 0x10000)"
+            echo "- bootloader.bin (flash at 0x0)"
+            echo "- partitions.bin (flash at 0x8000)"
+            echo
+            echo "Quick flash command:"
+            echo "\`\`\`bash"
+            echo "esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 firmware-merged.bin"
+            echo "\`\`\`"
+          } > output/CHANGELOG.md
+
+      - name: Write flashing note
+        run: |
+          cat > output/FLASHING.txt << 'EOF'
+          Flash-ready files:
+          - firmware-merged.bin  (recommended for end users, write at 0x0)
+          - firmware-app.bin     (application only, write at 0x10000)
+          - bootloader.bin       (offset 0x0)
+          - partitions.bin       (offset 0x8000)
+
+          Example (merged image):
+          esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 firmware-merged.bin
+          EOF
+
+      - name: Create or update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.metadata.outputs.next_tag }}
+          name: Firmware ${{ steps.metadata.outputs.next_tag }}
+          body_path: output/CHANGELOG.md
+          target_commitish: ${{ github.sha }}
+          files: |
+            output/firmware-merged.bin
+            output/firmware-app.bin
+            output/bootloader.bin
+            output/partitions.bin
+            output/FLASHING.txt
+            output/CHANGELOG.md
+          overwrite_files: true

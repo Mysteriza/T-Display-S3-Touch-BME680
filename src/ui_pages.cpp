@@ -8,6 +8,7 @@
 #include <esp_adc_cal.h>
 #include <esp_timer.h>
 #include <lvgl.h>
+#include <math.h>
 
 #include "config.h"
 #include "power_mgmt.h"
@@ -279,6 +280,21 @@ namespace
             return {"Unhealthy", "High", 0xFF6C37};
         }
         return {"Hazardous", "Very High", 0xFF3B30};
+    }
+
+    const char *describe_bsec_accuracy(uint8_t accuracy)
+    {
+        switch (accuracy)
+        {
+        case 0:
+            return "Very Low";
+        case 1:
+            return "Low";
+        case 2:
+            return "Medium";
+        default:
+            return "High";
+        }
     }
 
     uint32_t read_battery_mv(bool *has_battery)
@@ -771,10 +787,38 @@ namespace
             snprintf(text, sizeof(text), "%.2f kOhm", data.gas_resistance_kohm);
             lv_label_set_text_fmt(g_gas_value, "Gas res.\n%s", text);
 
-            lv_label_set_text_fmt(g_acc_value, "Accuracy\nLvl %u", data.iaq_accuracy);
-            lv_label_set_text_fmt(g_iaq_number, "%u", static_cast<uint32_t>(data.iaq));
+            const uint8_t acc_level = data.iaq_accuracy > 3U ? 3U : data.iaq_accuracy;
+            lv_label_set_text_fmt(g_acc_value,
+                                  "Accuracy\n%s (%u)",
+                                  describe_bsec_accuracy(acc_level),
+                                  acc_level);
 
-            int32_t iaq_value = static_cast<int32_t>(data.iaq);
+            float iaq_display = data.iaq;
+            if (!isfinite(iaq_display) && isfinite(data.iaq_static))
+            {
+                iaq_display = data.iaq_static;
+            }
+
+            int32_t iaq_value = 0;
+            if (isfinite(iaq_display))
+            {
+                const int32_t iaq_tenths = static_cast<int32_t>(lroundf(iaq_display * 10.0f));
+                const int32_t iaq_whole = iaq_tenths / 10;
+                int32_t iaq_frac = iaq_tenths % 10;
+                if (iaq_frac < 0)
+                {
+                    iaq_frac = -iaq_frac;
+                }
+                char iaq_text[16] = {0};
+                snprintf(iaq_text, sizeof(iaq_text), "%ld.%ld", static_cast<long>(iaq_whole), static_cast<long>(iaq_frac));
+                lv_label_set_text(g_iaq_number, iaq_text);
+                iaq_value = static_cast<int32_t>(lroundf(iaq_display));
+            }
+            else
+            {
+                lv_label_set_text(g_iaq_number, "--");
+            }
+
             iaq_value = clamp_i32(iaq_value, 0, 500);
             lv_arc_set_value(g_iaq_arc, iaq_value);
 
