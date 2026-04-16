@@ -65,6 +65,9 @@ namespace
         float pressure_hpa = NAN;
         float gas_resistance_kohm = NAN;
         float iaq = NAN;
+        float iaq_static = NAN;
+        float run_in_status = NAN;
+        float stabilization_status = NAN;
         uint8_t iaq_accuracy = 0;
         bool has_new_sample = false;
     } g_live;
@@ -348,6 +351,8 @@ namespace
 
     void bsec_callback(const bme68xData /*raw_data*/, const bsecOutputs outputs, Bsec2 /*bsec*/)
     {
+        bool has_bsec_output = false;
+
         for (uint8_t i = 0; i < outputs.nOutputs; ++i)
         {
             const bsecData &out = outputs.output[i];
@@ -356,26 +361,48 @@ namespace
             case BSEC_OUTPUT_IAQ:
                 g_live.iaq = out.signal;
                 g_live.iaq_accuracy = out.accuracy;
+                has_bsec_output = true;
+                break;
+            case BSEC_OUTPUT_STATIC_IAQ:
+                g_live.iaq_static = out.signal;
+                g_live.iaq_accuracy = out.accuracy;
+                has_bsec_output = true;
                 break;
             case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE:
                 g_live.temperature_c = out.signal;
+                has_bsec_output = true;
                 break;
             case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY:
                 g_live.humidity_pct = out.signal;
+                has_bsec_output = true;
                 break;
             case BSEC_OUTPUT_RAW_PRESSURE:
                 // bsec2.cpp already converts pressure from Pa to hPa before processing.
                 g_live.pressure_hpa = out.signal;
+                has_bsec_output = true;
                 break;
             case BSEC_OUTPUT_RAW_GAS:
                 g_live.gas_resistance_kohm = out.signal / 1000.0f;
+                has_bsec_output = true;
+                break;
+            case BSEC_OUTPUT_RUN_IN_STATUS:
+                g_live.run_in_status = out.signal;
+                has_bsec_output = true;
+                break;
+            case BSEC_OUTPUT_STABILIZATION_STATUS:
+                g_live.stabilization_status = out.signal;
+                has_bsec_output = true;
                 break;
             default:
                 break;
             }
         }
-        g_last_sample_ms = millis();
-        g_live.has_new_sample = true;
+
+        if (has_bsec_output)
+        {
+            g_last_sample_ms = millis();
+            g_live.has_new_sample = true;
+        }
     }
 
     void seed_default_snapshot()
@@ -386,6 +413,9 @@ namespace
         g_sensor_data.altitude_m = NAN;
         g_sensor_data.gas_resistance_kohm = NAN;
         g_sensor_data.iaq = NAN;
+        g_sensor_data.iaq_static = NAN;
+        g_sensor_data.run_in_status = NAN;
+        g_sensor_data.stabilization_status = NAN;
         g_sensor_data.iaq_accuracy = 0;
         g_sensor_data.valid = false;
         g_sensor_data.last_update_ms = 0;
@@ -395,6 +425,9 @@ namespace
         g_live.pressure_hpa = NAN;
         g_live.gas_resistance_kohm = NAN;
         g_live.iaq = NAN;
+        g_live.iaq_static = NAN;
+        g_live.run_in_status = NAN;
+        g_live.stabilization_status = NAN;
         g_live.iaq_accuracy = 0;
         g_live.has_new_sample = false;
     }
@@ -445,7 +478,10 @@ namespace
         g_sensor_data.humidity_pct = g_live.humidity_pct;
         g_sensor_data.pressure_hpa = g_live.pressure_hpa;
         g_sensor_data.gas_resistance_kohm = g_live.gas_resistance_kohm;
-        g_sensor_data.iaq = g_live.iaq;
+        g_sensor_data.iaq = isfinite(g_live.iaq_static) ? g_live.iaq_static : g_live.iaq;
+        g_sensor_data.iaq_static = g_live.iaq_static;
+        g_sensor_data.run_in_status = g_live.run_in_status;
+        g_sensor_data.stabilization_status = g_live.stabilization_status;
         g_sensor_data.iaq_accuracy = g_live.iaq_accuracy;
         g_sensor_data.altitude_m = calc_altitude(g_live.pressure_hpa);
         g_sensor_data.valid = has_core_values;
@@ -497,14 +533,17 @@ namespace
 
         if (snapshot.valid)
         {
-            Serial.printf("[SENSOR] data T=%.2f C H=%.2f %% P=%.2f hPa Alt=%.1f m Gas=%.2f kOhm IAQ=%.1f acc=%u\n",
+            Serial.printf("[SENSOR] data T=%.2f C H=%.2f %% P=%.2f hPa Alt=%.1f m Gas=%.2f kOhm IAQ=%.1f static=%.1f acc=%u runin=%.0f stab=%.0f\n",
                           snapshot.temperature_c,
                           snapshot.humidity_pct,
                           snapshot.pressure_hpa,
                           snapshot.altitude_m,
                           snapshot.gas_resistance_kohm,
                           snapshot.iaq,
-                          snapshot.iaq_accuracy);
+                          snapshot.iaq_static,
+                          snapshot.iaq_accuracy,
+                          snapshot.run_in_status,
+                          snapshot.stabilization_status);
         }
     }
 
@@ -831,6 +870,9 @@ bool sensors_init()
 
     bsec_virtual_sensor_t sensor_list[] = {
         BSEC_OUTPUT_IAQ,
+        BSEC_OUTPUT_STATIC_IAQ,
+        BSEC_OUTPUT_RUN_IN_STATUS,
+        BSEC_OUTPUT_STABILIZATION_STATUS,
         BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
         BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
         BSEC_OUTPUT_RAW_PRESSURE,
@@ -1144,6 +1186,14 @@ void sensorTask(void * /*parameter*/)
 
             if (!run_ok)
             {
+                const bool has_hard_error = (g_bsec.status < BSEC_OK) || (g_bsec.sensor.status < BME68X_OK);
+                if (!has_hard_error)
+                {
+                    run_fail_streak = 0;
+                    vTaskDelay(wait_ticks);
+                    continue;
+                }
+
                 if (run_fail_streak < 255U)
                 {
                     ++run_fail_streak;

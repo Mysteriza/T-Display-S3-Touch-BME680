@@ -10,6 +10,9 @@ struct SensorData
     float altitude_m;
     float gas_resistance_kohm;
     float iaq;
+    float iaq_static;
+    float run_in_status;
+    float stabilization_status;
     uint8_t iaq_accuracy;
     bool valid;
     uint32_t last_update_ms;

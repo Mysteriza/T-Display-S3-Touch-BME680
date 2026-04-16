@@ -151,6 +151,8 @@ Command behavior notes:
 - Sensor task runs separately (FreeRTOS) and retries initialization on failure.
 - If sensor data becomes stale for too long, firmware schedules automatic sensor re-initialization.
 - Transient single-cycle BSEC run failures are filtered before forcing re-initialization.
+- BSEC scheduler-aware run handling: normal no-output cycles no longer trigger false sensor re-init loops.
+- IAQ pipeline subscribes to IAQ, Static IAQ, Run-In, and Stabilization outputs for better calibration observability.
 - UI loop is throttled while display is off, while sensor sampling continues in the background.
 
 ## Main Configuration
@@ -158,7 +160,7 @@ Command behavior notes:
 Common settings in include/config.h:
 
 - `DISPLAY_TIMEOUT` (default 15000 ms)
-- `SENSOR_REFRESH` (default 15000 ms)
+- `SENSOR_REFRESH` (default 60000 ms)
 - `CPU_FREQ_ACTIVE_MHZ` (default 240)
 - `CPU_FREQ_SLEEP_MHZ` (default 80)
 - `PIN_I2C_SDA` (default 18)
@@ -189,6 +191,13 @@ Sea-level pressure calibration is stored in NVS namespace `sensorcfg` with key `
 - Run `set slp <hPa>` using local sea-level pressure, or
 - Run `set alt <meter>` using known local elevation.
 - Re-check with `status`.
+
+### IAQ / Accuracy stays low or IAQ looks flat
+
+- Keep the board powered continuously; gas calibration needs warm-up time and stable operation.
+- Verify with `status` that `runin` and `stab` progress and IAQ accuracy (`acc`) increases over time.
+- If IAQ or accuracy appears stuck, run `sensor reinit` once and observe `status` for 2-5 minutes.
+- Ensure sensor is not repeatedly disconnecting/reconnecting on I2C (check `i2c scan` output).
 
 ### Serial monitor is too noisy
 
