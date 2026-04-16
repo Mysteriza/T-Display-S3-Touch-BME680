@@ -153,13 +153,13 @@ Dampak:
 
 ## Wiring
 
-| Sensor   | T-Display-S3             |
-| -------- | ------------------------ |
-| VCC      | 3V3                      |
-| GND      | GND                      |
-| SDA      | GPIO18                   |
-| SCL      | GPIO17                   |
-| CS/CSB   | 3V3                      |
+| Sensor   | T-Display-S3               |
+| -------- | -------------------------- |
+| VCC      | 3V3                        |
+| GND      | GND                        |
+| SDA      | GPIO18                     |
+| SCL      | GPIO17                     |
+| CS/CSB   | 3V3                        |
 | SDO/ADDR | GND (0x76) atau 3V3 (0x77) |
 
 ## Build dan Upload
@@ -190,18 +190,18 @@ Buka monitor:
 platformio device monitor -b 115200
 ```
 
-| Command            | Fungsi |
-| ------------------ | ------ |
-| `help`             | Daftar command |
-| `status`           | Status sensor + data terbaru |
-| `get slp`          | Lihat sea-level pressure saat ini |
-| `set slp <hPa>`    | Set sea-level pressure manual |
+| Command            | Fungsi                                               |
+| ------------------ | ---------------------------------------------------- |
+| `help`             | Daftar command                                       |
+| `status`           | Status sensor + data terbaru                         |
+| `get slp`          | Lihat sea-level pressure saat ini                    |
+| `set slp <hPa>`    | Set sea-level pressure manual                        |
 | `set alt <meter>`  | Kalibrasi sea-level pressure dari altitude referensi |
-| `reset slp`        | Reset sea-level pressure ke default |
-| `sensor reinit`    | Paksa reinit sensor/BSEC |
-| `i2c scan`         | Scan device di bus I2C |
-| `debug detail on`  | Aktifkan debug verbose periodik |
-| `debug detail off` | Matikan debug verbose |
+| `reset slp`        | Reset sea-level pressure ke default                  |
+| `sensor reinit`    | Paksa reinit sensor/BSEC                             |
+| `i2c scan`         | Scan device di bus I2C                               |
+| `debug detail on`  | Aktifkan debug verbose periodik                      |
+| `debug detail off` | Matikan debug verbose                                |
 
 ## Troubleshooting Cepat
 
