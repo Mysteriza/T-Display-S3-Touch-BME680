@@ -1,41 +1,46 @@
 #include <Arduino.h>
+
 #include "power_mgmt.h"
-#include "sensors.h"
-#include "ui_pages.h"
+#include "sensor_manager.h"
+#include "ui_controller.h"
 
 void setup()
 {
   Serial.begin(115200);
   delay(120);
 
-  power_mgmt_init();
+  PowerManager::instance().init();
+
+  UiController &ui = UiController::instance();
+  SensorManager &sensor_manager = SensorManager::instance();
 
   BootDiagStatus boot_status{};
 
   boot_status.lcd_done = true;
-  boot_status.lcd_ok = ui_init_display();
-  ui_boot_diag_begin();
-  ui_boot_diag_update(boot_status);
+  boot_status.lcd_ok = ui.initDisplay();
+  ui.bootDiagBegin();
+  ui.bootDiagUpdate(boot_status);
 
   boot_status.touch_done = true;
-  boot_status.touch_ok = ui_init_touch();
-  ui_boot_diag_update(boot_status);
+  boot_status.touch_ok = ui.initTouch();
+  ui.bootDiagUpdate(boot_status);
 
   boot_status.sensor_done = true;
-  boot_status.sensor_ok = sensors_init();
-  ui_boot_diag_update(boot_status);
-  ui_boot_diag_finish(3000);
+  boot_status.sensor_ok = sensor_manager.init();
+  ui.bootDiagUpdate(boot_status);
+  ui.bootDiagFinish(3000);
 
-  ui_build_pages();
+  ui.buildPages();
 
-  xTaskCreatePinnedToCore(sensorTask, "sensorTask", 8192, nullptr, 2, nullptr, 0);
-  xTaskCreatePinnedToCore(uiTask, "uiTask", 12288, nullptr, 2, nullptr, 1);
+  xTaskCreatePinnedToCore(SensorManager::taskEntry, "sensorTask", 8192, &sensor_manager, 2, nullptr, 0);
+  xTaskCreatePinnedToCore(UiController::taskEntry, "uiTask", 12288, &ui, 2, nullptr, 1);
 }
 
 void loop()
 {
-  sensors_serial_tick();
-  sensors_debug_tick();
-  power_mgmt_loop();
+  static SerialCLI serial_cli(SensorManager::instance());
+  serial_cli.tick();
+  SensorManager::instance().debugTick();
+  PowerManager::instance().loop();
   delay(20);
 }

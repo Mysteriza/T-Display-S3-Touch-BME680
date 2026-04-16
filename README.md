@@ -1,6 +1,5 @@
 # T-Display-S3 Touch BME680 Monitor
 
-
 Offline environmental monitor firmware for LilyGO T-Display-S3 with BME680/BME688 and Bosch BSEC2.
 
 ## Design Prototype
@@ -25,6 +24,13 @@ The firmware runs two core loops:
 
 - Sensor loop: reads BME68x through BSEC2 scheduler, updates IAQ pipeline, and publishes fresh snapshots.
 - UI loop: renders values on screen and handles touch/wake behavior.
+
+The architecture is split into dedicated modules:
+
+- `include/config.h`: all tunable constants (`cfg::pins`, `cfg::timing`, `cfg::sensor`, `cfg::color`, etc.).
+- `include/sensor_manager.h` + `src/sensor_manager.cpp`: BSEC2 pipeline, NVS persistence, health checks, and serial command backend.
+- `include/ui_controller.h` + `src/ui_controller.cpp`: LVGL display/touch controller and all page rendering logic.
+- `include/power_mgmt.h` + `src/power_mgmt.cpp`: display timeout, wake ISR/button handling, and CPU frequency profile switching.
 
 IAQ stability logic includes:
 
@@ -150,6 +156,21 @@ py -m esptool --chip esp32s3 --port COM5 --baud 460800 write_flash 0x0 firmware-
 - Device keeps collecting data even when display backlight is off.
 - Press wake button (GPIO14 path) to turn display back on.
 
+## Project Structure
+
+```text
+include/
+  config.h
+  power_mgmt.h
+  sensor_manager.h
+  ui_controller.h
+src/
+  main.cpp
+  power_mgmt.cpp
+  sensor_manager.cpp
+  ui_controller.cpp
+```
+
 ### IAQ Accuracy Meaning
 
 - 0: Very Low (initial warm-up)
@@ -191,5 +212,24 @@ platformio device monitor -b 115200
 - IAQ appears flat:
   - Verify environment is actually changing (airflow, VOC source, humidity/temperature changes).
   - Run `sensor reinit` once, then monitor `status` for several minutes.
+  - Firmware now auto-recovers once if IAQ remains near 50 with accuracy 0 for extended time.
 - Altitude incorrect:
   - Use `set slp <hPa>` or `set alt <meter>`.
+
+UI note:
+
+- IAQ and Gas are shown as integer values for cleaner dashboard readability.
+
+## Change Log
+
+- Replaced legacy `sensors.*` with class-based `sensor_manager.*`.
+- Replaced legacy `ui_pages.*` with class-based `ui_controller.*`.
+- Extracted serial command parsing into dedicated `SerialCLI` class.
+- Refactored power handling to singleton `PowerManager` with ISR-safe wake flow.
+- Centralized magic numbers into namespaced `cfg::*` constants in `config.h`.
+- Kept offline-only behavior (no Wi-Fi, Bluetooth, or cloud dependency).
+- Fixed pressure/altitude scaling path so pressure stays in hPa and altitude calculation is consistent.
+- Reduced noisy runtime I2C link probing and added NVS state-key guard to avoid recurring serial error spam.
+- Improved IAQ gauge status color mapping to follow IAQ value bands and tightened calibrating-state conditions.
+- Normalized AQI colors to semantic defaults: green for good/normal, yellow for warning/caution, red for bad/error conditions.
+- Simplified Accuracy display text to label-only format (Very Low/Low/Medium/High) without numeric suffix.

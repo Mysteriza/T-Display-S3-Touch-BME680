@@ -2,21 +2,25 @@
 
 #include <driver/gpio.h>
 #include <esp32-hal-cpu.h>
+
 #include "config.h"
 
-static volatile uint32_t g_last_interaction_ms = 0;
-static volatile uint32_t g_last_button_isr_ms = 0;
-static volatile bool g_display_awake = true;
-static bool g_last_profile_awake = true;
+PowerManager *PowerManager::self_ = nullptr;
 
-static inline uint32_t isr_millis()
+PowerManager &PowerManager::instance()
+{
+    static PowerManager manager;
+    return manager;
+}
+
+uint32_t PowerManager::isrMillis() const
 {
     return static_cast<uint32_t>(xTaskGetTickCountFromISR() * portTICK_PERIOD_MS);
 }
 
-static void apply_cpu_profile(bool display_awake)
+void PowerManager::applyCpuProfile(bool display_awake)
 {
-    const uint32_t target_mhz = display_awake ? CPU_FREQ_ACTIVE_MHZ : CPU_FREQ_SLEEP_MHZ;
+    const uint32_t target_mhz = display_awake ? cfg::power::kCpuFreqActiveMhz : cfg::power::kCpuFreqSleepMhz;
     const uint32_t current_mhz = static_cast<uint32_t>(getCpuFrequencyMhz());
     if (current_mhz != target_mhz)
     {
@@ -24,69 +28,84 @@ static void apply_cpu_profile(bool display_awake)
     }
 }
 
-void IRAM_ATTR wake_system_reset()
+void IRAM_ATTR PowerManager::wakeFromInteractionISR()
 {
-    const uint32_t now_ms = xPortInIsrContext() ? isr_millis() : millis();
-    g_last_interaction_ms = now_ms;
-    g_display_awake = true;
-    gpio_set_level(static_cast<gpio_num_t>(PIN_LCD_BL), 1);
+    const uint32_t now_ms = xPortInIsrContext() ? isrMillis() : millis();
+    last_interaction_ms_ = now_ms;
+    display_awake_ = true;
+    gpio_set_level(static_cast<gpio_num_t>(cfg::pins::kLcdBacklight), 1);
 }
 
-static void IRAM_ATTR button_wake_isr()
+void PowerManager::wakeFromInteraction()
 {
-    const uint32_t now_ms = isr_millis();
-    if (now_ms - g_last_button_isr_ms < BUTTON_DEBOUNCE_MS)
+    wakeFromInteractionISR();
+}
+
+void IRAM_ATTR PowerManager::handleButtonWakeIsr()
+{
+    const uint32_t now_ms = isrMillis();
+    if (now_ms - last_button_isr_ms_ < cfg::timing::kButtonDebounceMs)
     {
         return;
     }
 
-    if (gpio_get_level(static_cast<gpio_num_t>(PIN_BUTTON_WAKE)) != 0)
+    if (gpio_get_level(static_cast<gpio_num_t>(cfg::pins::kButtonWake)) != 0)
     {
         return;
     }
 
-    g_last_button_isr_ms = now_ms;
-    wake_system_reset();
+    last_button_isr_ms_ = now_ms;
+    wakeFromInteractionISR();
 }
 
-void power_mgmt_init()
+void IRAM_ATTR PowerManager::buttonWakeIsrThunk()
 {
-    pinMode(PIN_LCD_BL, OUTPUT);
-    gpio_set_level(static_cast<gpio_num_t>(PIN_LCD_BL), 1);
-
-    pinMode(PIN_BUTTON_WAKE, INPUT_PULLUP);
-    g_last_interaction_ms = millis();
-    g_display_awake = true;
-    g_last_profile_awake = true;
-
-    apply_cpu_profile(g_display_awake);
-
-    // Wake on active-low button press only to avoid edge-noise extending timeout.
-    attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_WAKE), button_wake_isr, FALLING);
+    if (self_ != nullptr)
+    {
+        self_->handleButtonWakeIsr();
+    }
 }
 
-void power_mgmt_loop()
+void PowerManager::init()
+{
+    self_ = this;
+
+    pinMode(cfg::pins::kLcdBacklight, OUTPUT);
+    gpio_set_level(static_cast<gpio_num_t>(cfg::pins::kLcdBacklight), 1);
+
+    pinMode(cfg::pins::kButtonWake, INPUT_PULLUP);
+
+    last_interaction_ms_ = millis();
+    display_awake_ = true;
+    last_profile_awake_ = true;
+
+    applyCpuProfile(true);
+
+    attachInterrupt(digitalPinToInterrupt(cfg::pins::kButtonWake), PowerManager::buttonWakeIsrThunk, FALLING);
+}
+
+void PowerManager::loop()
 {
     const uint32_t now_ms = millis();
-    if (g_display_awake && (now_ms - g_last_interaction_ms > DISPLAY_TIMEOUT))
+    if (display_awake_ && (now_ms - last_interaction_ms_ > cfg::timing::kDisplayTimeoutMs))
     {
-        gpio_set_level(static_cast<gpio_num_t>(PIN_LCD_BL), 0);
-        g_display_awake = false;
+        gpio_set_level(static_cast<gpio_num_t>(cfg::pins::kLcdBacklight), 0);
+        display_awake_ = false;
     }
 
-    if (g_display_awake != g_last_profile_awake)
+    if (display_awake_ != last_profile_awake_)
     {
-        apply_cpu_profile(g_display_awake);
-        g_last_profile_awake = g_display_awake;
+        applyCpuProfile(display_awake_);
+        last_profile_awake_ = display_awake_;
     }
 }
 
-uint32_t power_get_last_interaction_time()
+bool PowerManager::isDisplayAwake() const
 {
-    return g_last_interaction_ms;
+    return display_awake_;
 }
 
-bool power_is_display_awake()
+uint32_t PowerManager::lastInteractionMs() const
 {
-    return g_display_awake;
+    return last_interaction_ms_;
 }
