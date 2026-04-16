@@ -991,7 +991,6 @@ void UiController::updateValues()
             lv_obj_set_style_arc_color(page_aqi_.iaq_arc, lv_color_hex(cfg::color::kBootChecking), LV_PART_INDICATOR);
             lv_obj_set_style_text_color(page_aqi_.iaq_status, lv_color_hex(cfg::color::kBootChecking), 0);
         }
-
     }
     else
     {
