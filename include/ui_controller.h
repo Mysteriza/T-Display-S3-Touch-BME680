@@ -20,6 +20,8 @@ struct BootDiagStatus
     bool data_ok = false;
     bool iaq_done = false;
     bool iaq_ok = false;
+    bool model_done = false;
+    bool model_ok = false;
 };
 
 class UiController
@@ -55,11 +57,17 @@ private:
 
     struct PageAqiData
     {
-        lv_obj_t *gas = nullptr;
-        lv_obj_t *accuracy = nullptr;
+        lv_obj_t *gas_title = nullptr;
+        lv_obj_t *gas_value = nullptr;
+        lv_obj_t *gas_status_title = nullptr;
+        lv_obj_t *gas_status_value = nullptr;
+        lv_obj_t *accuracy_title = nullptr;
+        lv_obj_t *accuracy_value = nullptr;
         lv_obj_t *iaq_arc = nullptr;
+        lv_obj_t *iaq_title = nullptr;
         lv_obj_t *iaq_number = nullptr;
-        lv_obj_t *iaq_status = nullptr;
+        lv_obj_t *status_title = nullptr;
+        lv_obj_t *status_value = nullptr;
     };
 
     struct PageSysData
@@ -101,13 +109,13 @@ private:
     uint32_t readBatteryMv(bool *has_battery);
     uint8_t batteryPercentFromMv(uint32_t mv) const;
     uint32_t estimateBatteryOcvMv(uint32_t measured_mv, bool display_awake) const;
-    uint8_t estimateCpuLoadPercent(uint32_t now_ms);
+    uint8_t estimateUiTaskLoadPercent() const;
     lv_color_t blendHexColors(uint32_t from_hex, uint32_t to_hex, uint8_t mix_255) const;
     lv_color_t batteryColorFromPercent(uint8_t percent, bool usb_power) const;
 
     IaqDescriptor describeIaqStatus(int32_t iaq_value) const;
 
-    void formatUptime(char *out, size_t out_len, uint32_t uptime_seconds) const;
+    void formatUptime(char *out, size_t out_len, uint64_t uptime_seconds) const;
     int32_t clampI32(int32_t value, int32_t low, int32_t high) const;
     int32_t roundToInt(float value) const;
 
@@ -136,6 +144,7 @@ private:
     lv_obj_t *boot_sensor_ = nullptr;
     lv_obj_t *boot_data_ = nullptr;
     lv_obj_t *boot_iaq_ = nullptr;
+    lv_obj_t *boot_model_ = nullptr;
 
     lv_obj_t *pages_[3] = {nullptr, nullptr, nullptr};
     lv_obj_t *env_headers_[3] = {nullptr, nullptr, nullptr};

@@ -1,3 +1,5 @@
+#include "serial_cli.h"
+
 #include "sensor_manager.h"
 
 #include <ctype.h>
@@ -163,7 +165,7 @@ void SerialCLI::handleCommand(char *line)
 
         if (strcmp(argv[2], "digest") == 0)
         {
-            sensor_manager_.printIaqModelStatus(Serial);
+            sensor_manager_.printIaqModelDigest(Serial);
             return;
         }
 

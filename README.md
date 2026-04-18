@@ -18,7 +18,7 @@ The system runs in two main FreeRTOS loops on separate cores:
 Important principles:
 
 - The sensor is processed in real-time by BSEC (`run()` is called frequently), not every 30 seconds.
-- Data published to the UI is synchronized every `kSensorRefreshMs` (default 30 seconds) to reduce redraws and save battery.
+- Sensor data publishing remains every `kSensorRefreshMs` (default 30 seconds), while UI labels can refresh each second to keep status text responsive.
 - If data is temporarily invalid, the UI retains the last valid snapshot (anti-flicker), and will display NO DATA if it truly becomes stale.
 
 ## Project Structure Overview
@@ -41,7 +41,7 @@ src/
 - **Real-time Environment Data**: Temperature, Humidity, Air Pressure, and calculated Altitude.
 - **AQI Monitoring**: Real-time Gas Resistance and Indoor Air Quality (IAQ) from Bosch BSEC2.
 - **Adaptive IAQ Statusing (Page 02)**: Hybrid IAQ banding that keeps BSEC output as baseline and applies bounded gas-history correction with confidence + fallback safeguards.
-- **System Telemetry**: CPU Load estimate (% from UI task activity), Uptime counter, and Battery Percentage.
+- **System Telemetry**: UI task load estimate, Uptime counter, and Battery Percentage.
 - **Power Optimization**: Background sensor processing with reduced screen redraws.
 - **Serial Diagnostics**: Built-in CLI for status checks and manual calibration.
 - **Automatic Recovery**: Detects and clears stuck IAQ states automatically.
@@ -52,8 +52,14 @@ src/
 
 - Display timeout: **15 seconds** of inactivity.
 - Sensor publish interval to UI: **30 seconds** (`kSensorRefreshMs`).
+- UI value refresh cadence: **1 second** (`kUiValuesRefreshMs`).
 - Uptime label refresh: **1 second**.
 - Boot data/IAQ verification window: **up to 15 seconds**.
+
+Temperature compensation policy:
+
+- Current default BSEC temperature offset is **0.0 C** (`kBsecTemperatureOffsetC`) because the sensor placement is thermally separated from the main board.
+- For a future compact enclosure where the sensor is close to board heat, start with **0.5 C** (see `kBsecTemperatureOffsetCompactC`) and validate against a reference thermometer before increasing.
 
 ## Battery Percentage Model
 
@@ -209,7 +215,7 @@ Available commands:
 - `debug detail on`: Turn on periodic verbose debugging
 - `debug detail off`: Turn off verbose debugging
 - `iaq model status`: Show IAQ adaptive model diagnostics (confidence, state, reference gas, delta)
-- `iaq model digest`: Show concise IAQ adaptive health digest (EMA baseline/adaptive proxy error and rollback counters)
+- `iaq model digest`: Show concise IAQ adaptive runtime digest (state, confidence, readiness, history, effective IAQ)
 - `iaq model reset`: Reset IAQ adaptive model and clear local learning history
 
 Adaptive IAQ production safeguards:
@@ -218,6 +224,7 @@ Adaptive IAQ production safeguards:
 - Anti-regression guard continuously compares adaptive output against a gas-derived proxy target.
 - Automatic rollback resets adaptive correction to baseline if adaptive path degrades repeatedly.
 - Periodic digest output is rate-limited (hourly in detailed debug mode) to avoid serial spam and extra power draw.
+- During early warmup (run-in/stabilization not ready, low accuracy), Page 02 shows `Warming up...` and `Calibrating` instead of a misleading fixed-good status.
 
 Boot production checklist:
 

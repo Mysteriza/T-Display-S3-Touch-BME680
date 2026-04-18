@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <Wire.h>
+#include <atomic>
 #include <bsec2.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -69,6 +70,7 @@ public:
 
     void printStatus(Stream &out) const;
     void printIaqModelStatus(Stream &out) const;
+    void printIaqModelDigest(Stream &out) const;
     void printHelp(Stream &out) const;
     void scanI2CBuses(Stream &out);
     void resetIaqAdaptiveModel(bool clear_history);
@@ -136,8 +138,8 @@ private:
     bool i2cPing(TwoWire &bus, uint8_t address) const;
     bool i2cReadReg(TwoWire &bus, uint8_t address, uint8_t reg, uint8_t &value) const;
     bool isBme68xChip(TwoWire &bus, uint8_t address, uint8_t *chip_id = nullptr) const;
-    bool anyBme68xPresentOnBus(TwoWire &bus) const;
-    bool anyBme68xPresent() const;
+    bool anyBme68xPresentOnBus(TwoWire &bus);
+    bool anyBme68xPresent();
 
     void appendCandidateIfPresent(BmeCandidate *list, size_t list_capacity, size_t &count, TwoWire &bus, bool on_alt_bus, uint8_t addr);
     void appendBusCandidates(BmeCandidate *list, size_t list_capacity, size_t &count, TwoWire &bus, bool on_alt_bus);
@@ -185,7 +187,7 @@ private:
     bool bme_on_alt_bus_ = false;
 
     uint32_t last_publish_ms_ = 0;
-    uint32_t last_sample_ms_ = 0;
+    std::atomic<uint32_t> last_sample_ms_{0};
     uint32_t last_state_save_ms_ = 0;
     uint32_t last_debug_ms_ = 0;
     uint32_t last_link_probe_ms_ = 0;
@@ -217,21 +219,4 @@ private:
     uint8_t iaq_model_confidence_ = 0;
     uint8_t iaq_model_state_ = 0;
     uint8_t iaq_rollback_streak_ = 0;
-};
-
-class SerialCLI
-{
-public:
-    explicit SerialCLI(SensorManager &sensor_manager);
-    void tick();
-
-private:
-    void trimInPlace(char *text) const;
-    void toLowerAscii(char *text) const;
-    void handleCommand(char *line);
-
-private:
-    SensorManager &sensor_manager_;
-    char line_buffer_[96] = {0};
-    size_t line_len_ = 0;
 };

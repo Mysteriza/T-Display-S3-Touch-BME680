@@ -62,7 +62,7 @@ namespace cfg
 
         inline constexpr uint32_t kCpuLoadRefreshMs = kSensorRefreshMs;
         inline constexpr uint32_t kSysInfoRefreshMs = kSensorRefreshMs;
-        inline constexpr uint32_t kUiValuesRefreshMs = kSensorRefreshMs;
+        inline constexpr uint32_t kUiValuesRefreshMs = 1000UL;
         inline constexpr uint32_t kUptimeRefreshMs = 1000UL;
     }
 
@@ -77,6 +77,8 @@ namespace cfg
         inline constexpr int kCardGap = 8;
         inline constexpr int kCardStartY = 30;
         inline constexpr int kCardSecondRowY = 94;
+        inline constexpr int kSysCardY = 98;
+        inline constexpr int kSysCardHeight = 64;
 
         inline constexpr int kMarginLeft = 8;
         inline constexpr int kMarginRight = 8;
@@ -117,6 +119,16 @@ namespace cfg
 
     namespace sensor
     {
+        inline constexpr uint8_t kIaqAccuracyVeryLow = 0;
+        inline constexpr uint8_t kIaqAccuracyLow = 1;
+        inline constexpr uint8_t kIaqAccuracyMedium = 2;
+        inline constexpr uint8_t kIaqAccuracyHigh = 3;
+
+        inline constexpr uint8_t kIaqModelBaseline = 0;
+        inline constexpr uint8_t kIaqModelLearning = 1;
+        inline constexpr uint8_t kIaqModelAdaptive = 2;
+        inline constexpr uint8_t kIaqModelFallback = 3;
+
         inline constexpr uint8_t kRunFailLimit = 2;
         inline constexpr uint8_t kLinkOkLimit = 2;
         inline constexpr uint8_t kLinkFailLimit = 2;
@@ -126,6 +138,10 @@ namespace cfg
         inline constexpr float kSeaLevelDefaultHpa = 1013.25f;
         inline constexpr float kSeaLevelMinHpa = 850.0f;
         inline constexpr float kSeaLevelMaxHpa = 1100.0f;
+        // Default offset is disabled because sensor placement is thermally isolated from the board.
+        inline constexpr float kBsecTemperatureOffsetC = 0.0f;
+        // Use this preset when a future compact design puts the sensor close to board heat.
+        inline constexpr float kBsecTemperatureOffsetCompactC = 0.5f;
         inline constexpr float kKnownAltitudeMinM = -500.0f;
         inline constexpr float kKnownAltitudeMaxM = 9000.0f;
         inline constexpr float kIaqStuckTarget = 50.0f;
@@ -142,8 +158,8 @@ namespace cfg
         inline constexpr float kIaqAdaptiveMaxStep = 2.0f;
         inline constexpr float kIaqAdaptivePoorGuardBand = 5.0f;
         inline constexpr uint8_t kIaqAdaptiveMinAccuracy = 2;
-        inline constexpr float kIaqAdaptiveRunInReady = 1.0f;
-        inline constexpr float kIaqAdaptiveStabilizationReady = 1.0f;
+        inline constexpr float kBsecRunInReadyValue = 1.0f;
+        inline constexpr float kBsecStabilizationReadyValue = 1.0f;
         inline constexpr float kIaqAdaptiveDeltaDecay = 0.92f;
         inline constexpr float kIaqAdaptiveHealthAlpha = 0.20f;
         inline constexpr float kIaqAdaptiveRollbackErrorMargin = 3.0f;
@@ -157,6 +173,7 @@ namespace cfg
         inline constexpr uint32_t kCardBackground = 0x0A0A0A;
         inline constexpr uint32_t kBorder = 0x1E3A5F;
         inline constexpr uint32_t kTextDim = 0xA8B0C0;
+        inline constexpr uint32_t kTextPrimary = 0xFFFFFF;
         inline constexpr uint32_t kValue = 0x00FFFF;
         inline constexpr uint32_t kStatusOk = 0x39FF14;
         inline constexpr uint32_t kError = 0xFF3B30;

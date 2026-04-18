@@ -3,6 +3,7 @@
 
 #include "config.h"
 #include "power_mgmt.h"
+#include "serial_cli.h"
 #include "sensor_manager.h"
 #include "ui_controller.h"
 
@@ -123,6 +124,16 @@ void setup()
     boot_status.data_ok = check.data_ok;
     boot_status.iaq_done = true;
     boot_status.iaq_ok = check.iaq_ok;
+
+    const SensorData snapshot = sensor_manager.getData();
+    const bool model_metrics_ok = isfinite(snapshot.iaq_effective) &&
+                                  (snapshot.iaq_effective >= 0.0f) &&
+                                  (snapshot.iaq_effective <= 500.0f) &&
+                                  (snapshot.iaq_model_confidence <= 100U) &&
+                                  (snapshot.iaq_model_state <= 3U);
+    boot_status.model_done = true;
+    boot_status.model_ok = model_metrics_ok;
+
     ui.bootDiagUpdate(boot_status);
   }
   else
@@ -131,6 +142,8 @@ void setup()
     boot_status.data_ok = false;
     boot_status.iaq_done = true;
     boot_status.iaq_ok = false;
+    boot_status.model_done = true;
+    boot_status.model_ok = false;
     ui.bootDiagUpdate(boot_status);
   }
 

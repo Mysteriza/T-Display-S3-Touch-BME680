@@ -16,11 +16,6 @@ namespace
 
     constexpr uint32_t kDebugIntervalMs = 10000UL;
 
-    constexpr uint8_t kIaqModelBaseline = 0;
-    constexpr uint8_t kIaqModelLearning = 1;
-    constexpr uint8_t kIaqModelAdaptive = 2;
-    constexpr uint8_t kIaqModelFallback = 3;
-
     struct PersistedIaqAdaptiveState
     {
         uint32_t magic = 0;
@@ -30,7 +25,7 @@ namespace
         float adaptive_delta = 0.0f;
         uint32_t adaptive_samples = 0;
         uint8_t model_confidence = 0;
-        uint8_t model_state = kIaqModelLearning;
+        uint8_t model_state = cfg::sensor::kIaqModelLearning;
         uint16_t checksum = 0;
     };
 
@@ -114,9 +109,19 @@ bool SensorManager::setSeaLevelPressure(float hpa, bool persist)
         return false;
     }
 
+    ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(50));
+    if (!guard.ownsLock())
     {
-        ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(50));
-        sea_level_hpa_ = hpa;
+        return false;
+    }
+
+    sea_level_hpa_ = hpa;
+
+    if (isfinite(sensor_data_.pressure_hpa) && (sensor_data_.pressure_hpa > 0.0f))
+    {
+        sensor_data_.altitude_m = calcAltitude(sensor_data_.pressure_hpa);
+        sensor_data_.last_update_ms = millis();
+        last_safe_snapshot_ = sensor_data_;
     }
 
     if (persist && cfg_ready_)
@@ -124,7 +129,6 @@ bool SensorManager::setSeaLevelPressure(float hpa, bool persist)
         cfg_nvs_.putFloat("slp_hpa", sea_level_hpa_);
     }
 
-    refreshAltitudeFromSnapshot();
     return true;
 }
 
@@ -254,21 +258,21 @@ bool SensorManager::isBme68xChip(TwoWire &bus, uint8_t address, uint8_t *chip_id
     return id == cfg::sensor::kBmeChipIdValue;
 }
 
-bool SensorManager::anyBme68xPresentOnBus(TwoWire &bus) const
+bool SensorManager::anyBme68xPresentOnBus(TwoWire &bus)
 {
     // Runtime link probing should be lightweight and avoid register reads
     // that can spam requestFrom errors on unstable buses.
     return i2cPing(bus, 0x76) || i2cPing(bus, 0x77);
 }
 
-bool SensorManager::anyBme68xPresent() const
+bool SensorManager::anyBme68xPresent()
 {
     if (anyBme68xPresentOnBus(Wire))
     {
         return true;
     }
 
-    if (alt_bus_enabled_ && anyBme68xPresentOnBus(const_cast<TwoWire &>(alt_wire_)))
+    if (alt_bus_enabled_ && anyBme68xPresentOnBus(alt_wire_))
     {
         return true;
     }
@@ -528,16 +532,13 @@ void SensorManager::saveIaqAdaptiveStateIfDue(uint32_t now_ms, bool force)
         return;
     }
 
-    if (!force)
+    const bool never_saved = (iaq_last_state_save_ms_ == 0U);
+    const uint32_t gap_ms = never_saved ? 0U : (now_ms - iaq_last_state_save_ms_);
+    const bool min_gap_ok = never_saved || (gap_ms >= cfg::sensor::kIaqAdaptiveSaveMinGapMs);
+    const bool interval_ok = never_saved || (gap_ms >= cfg::sensor::kIaqAdaptiveSaveMs);
+    if (!min_gap_ok || (!interval_ok && !force))
     {
-        if ((iaq_last_state_save_ms_ != 0U) && (now_ms - iaq_last_state_save_ms_ < cfg::timing::kBsecStateSaveMinGapMs))
-        {
-            return;
-        }
-        if ((iaq_last_state_save_ms_ != 0U) && (now_ms - iaq_last_state_save_ms_ < cfg::sensor::kIaqAdaptiveSaveMs))
-        {
-            return;
-        }
+        return;
     }
 
     PersistedIaqAdaptiveState state{};
@@ -600,6 +601,12 @@ void SensorManager::appendIaqAdaptiveSample(uint32_t now_ms)
 
 void SensorManager::updateIaqAdaptiveModel(uint32_t now_ms)
 {
+    ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(20));
+    if (!guard.ownsLock())
+    {
+        return;
+    }
+
     appendIaqAdaptiveSample(now_ms);
 
     float base_iaq = live_.iaq;
@@ -613,20 +620,34 @@ void SensorManager::updateIaqAdaptiveModel(uint32_t now_ms)
         live_.iaq_effective = NAN;
         live_.iaq_adaptive_delta = 0.0f;
         live_.iaq_model_confidence = 0;
-        live_.iaq_model_state = kIaqModelBaseline;
+        live_.iaq_model_state = cfg::sensor::kIaqModelBaseline;
         return;
     }
 
     if (!isfinite(live_.gas_resistance_kohm) || (live_.gas_resistance_kohm <= 0.0f) || (iaq_history_count_ == 0U))
     {
+        const bool run_in_ready = isfinite(live_.run_in_status) && (live_.run_in_status >= cfg::sensor::kBsecRunInReadyValue);
+        const bool stabilization_ready = isfinite(live_.stabilization_status) && (live_.stabilization_status >= cfg::sensor::kBsecStabilizationReadyValue);
+
+        uint8_t progress_score = 0;
+        if (isfinite(live_.run_in_status) && (live_.run_in_status > 0.0f))
+        {
+            progress_score = static_cast<uint8_t>((live_.run_in_status >= 1.0f) ? 100U : lroundf(live_.run_in_status * 100.0f));
+        }
+
+        const uint8_t accuracy_score = static_cast<uint8_t>((static_cast<uint16_t>(live_.iaq_accuracy) * 100U) / cfg::sensor::kIaqAccuracyHigh);
+        iaq_model_confidence_ = static_cast<uint8_t>((static_cast<uint16_t>(progress_score) + static_cast<uint16_t>(accuracy_score)) / 2U);
+        iaq_model_state_ = (run_in_ready && stabilization_ready) ? cfg::sensor::kIaqModelLearning : cfg::sensor::kIaqModelBaseline;
+
         live_.iaq_effective = base_iaq;
         live_.iaq_adaptive_delta = 0.0f;
-        live_.iaq_model_confidence = 0;
-        live_.iaq_model_state = kIaqModelBaseline;
+        live_.iaq_model_confidence = iaq_model_confidence_;
+        live_.iaq_model_state = iaq_model_state_;
         return;
     }
 
     float gas_sum = 0.0f;
+    float good_gas_sum = 0.0f;
     uint32_t good_acc_count = 0;
     uint32_t valid_count = 0;
     for (size_t i = 0; i < iaq_history_count_; ++i)
@@ -640,6 +661,7 @@ void SensorManager::updateIaqAdaptiveModel(uint32_t now_ms)
         ++valid_count;
         if (sample.iaq_accuracy >= cfg::sensor::kIaqAdaptiveMinAccuracy)
         {
+            good_gas_sum += sample.gas_resistance_kohm;
             ++good_acc_count;
         }
     }
@@ -649,17 +671,19 @@ void SensorManager::updateIaqAdaptiveModel(uint32_t now_ms)
         live_.iaq_effective = base_iaq;
         live_.iaq_adaptive_delta = 0.0f;
         live_.iaq_model_confidence = 0;
-        live_.iaq_model_state = kIaqModelBaseline;
+        live_.iaq_model_state = cfg::sensor::kIaqModelBaseline;
         return;
     }
 
-    const float mean_gas = gas_sum / static_cast<float>(valid_count);
+    const float mean_gas_all = gas_sum / static_cast<float>(valid_count);
+    const float mean_gas_good = (good_acc_count > 0U) ? (good_gas_sum / static_cast<float>(good_acc_count)) : NAN;
+    const float mean_gas = isfinite(mean_gas_good) && (mean_gas_good > 0.0f) ? mean_gas_good : mean_gas_all;
     if (!isfinite(mean_gas) || (mean_gas <= 0.0f))
     {
         live_.iaq_effective = base_iaq;
         live_.iaq_adaptive_delta = 0.0f;
         live_.iaq_model_confidence = 0;
-        live_.iaq_model_state = kIaqModelBaseline;
+        live_.iaq_model_state = cfg::sensor::kIaqModelBaseline;
         return;
     }
 
@@ -702,8 +726,8 @@ void SensorManager::updateIaqAdaptiveModel(uint32_t now_ms)
         target_iaq = 500.0f;
     }
 
-    const bool run_in_ready = isfinite(live_.run_in_status) && (live_.run_in_status >= cfg::sensor::kIaqAdaptiveRunInReady);
-    const bool stabilization_ready = isfinite(live_.stabilization_status) && (live_.stabilization_status >= cfg::sensor::kIaqAdaptiveStabilizationReady);
+    const bool run_in_ready = isfinite(live_.run_in_status) && (live_.run_in_status >= cfg::sensor::kBsecRunInReadyValue);
+    const bool stabilization_ready = isfinite(live_.stabilization_status) && (live_.stabilization_status >= cfg::sensor::kBsecStabilizationReadyValue);
     const bool history_ready = iaq_history_count_ >= cfg::sensor::kIaqAdaptiveMinSamples;
     const bool adaptation_ready = run_in_ready && stabilization_ready && history_ready &&
                                   (live_.iaq_accuracy >= cfg::sensor::kIaqAdaptiveMinAccuracy);
@@ -727,7 +751,7 @@ void SensorManager::updateIaqAdaptiveModel(uint32_t now_ms)
         const uint8_t sample_score = static_cast<uint8_t>((capped_samples * 100U) / max_samples);
         const uint8_t accuracy_score = static_cast<uint8_t>((static_cast<uint16_t>(live_.iaq_accuracy) * 100U) / 3U);
         iaq_model_confidence_ = static_cast<uint8_t>((static_cast<uint16_t>(sample_score) + static_cast<uint16_t>(accuracy_score)) / 2U);
-        iaq_model_state_ = kIaqModelLearning;
+        iaq_model_state_ = cfg::sensor::kIaqModelLearning;
 
         live_.iaq_effective = base_iaq;
         live_.iaq_adaptive_delta = 0.0f;
@@ -765,7 +789,7 @@ void SensorManager::updateIaqAdaptiveModel(uint32_t now_ms)
     if (live_.iaq_accuracy < cfg::sensor::kIaqAdaptiveMinAccuracy)
     {
         iaq_adaptive_delta_ *= 0.85f;
-        iaq_model_state_ = kIaqModelFallback;
+        iaq_model_state_ = cfg::sensor::kIaqModelFallback;
     }
 
     float effective_iaq = base_iaq + iaq_adaptive_delta_;
@@ -811,7 +835,7 @@ void SensorManager::updateIaqAdaptiveModel(uint32_t now_ms)
         iaq_rollback_streak_ = 0;
         iaq_adaptive_delta_ = 0.0f;
         effective_iaq = base_iaq;
-        iaq_model_state_ = kIaqModelFallback;
+        iaq_model_state_ = cfg::sensor::kIaqModelFallback;
     }
 
     const uint32_t max_samples = static_cast<uint32_t>(cfg::sensor::kIaqAdaptiveMinSamples);
@@ -837,19 +861,19 @@ void SensorManager::updateIaqAdaptiveModel(uint32_t now_ms)
 
     if (iaq_history_count_ < cfg::sensor::kIaqAdaptiveMinSamples)
     {
-        iaq_model_state_ = kIaqModelLearning;
+        iaq_model_state_ = cfg::sensor::kIaqModelLearning;
     }
     else if ((live_.iaq_accuracy < cfg::sensor::kIaqAdaptiveMinAccuracy) || (confidence < 40U))
     {
-        iaq_model_state_ = kIaqModelFallback;
+        iaq_model_state_ = cfg::sensor::kIaqModelFallback;
     }
     else
     {
-        iaq_model_state_ = kIaqModelAdaptive;
+        iaq_model_state_ = cfg::sensor::kIaqModelAdaptive;
     }
     if (rollback_triggered)
     {
-        iaq_model_state_ = kIaqModelFallback;
+        iaq_model_state_ = cfg::sensor::kIaqModelFallback;
     }
 
     live_.iaq_effective = effective_iaq;
@@ -926,15 +950,21 @@ bool SensorManager::isIaqStuckPattern() const
     const bool static_flat = isfinite(live_.iaq_static) &&
                              (fabsf(live_.iaq_static - cfg::sensor::kIaqStuckTarget) <= cfg::sensor::kIaqStuckTolerance);
 
-    const bool still_calibrating = (live_.iaq_accuracy <= 1U) &&
-                                   (!isfinite(live_.run_in_status) || (live_.run_in_status < 1.0f) ||
-                                    !isfinite(live_.stabilization_status) || (live_.stabilization_status < 1.0f));
+    const bool still_calibrating = (live_.iaq_accuracy <= cfg::sensor::kIaqAccuracyLow) &&
+                                   (!isfinite(live_.run_in_status) || (live_.run_in_status < cfg::sensor::kBsecRunInReadyValue) ||
+                                    !isfinite(live_.stabilization_status) || (live_.stabilization_status < cfg::sensor::kBsecStabilizationReadyValue));
 
     return iaq_flat && static_flat && still_calibrating;
 }
 
 void SensorManager::maybeRecoverStuckIaq(uint32_t now_ms)
 {
+    ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(20));
+    if (!guard.ownsLock())
+    {
+        return;
+    }
+
     if (iaq_stuck_recovery_done_)
     {
         return;
@@ -999,6 +1029,11 @@ bool SensorManager::init()
     if (sensor_mutex_ == nullptr)
     {
         sensor_mutex_ = xSemaphoreCreateMutex();
+        if (sensor_mutex_ == nullptr)
+        {
+            Serial.println("[SENSOR] init failed: mutex allocation failed.");
+            return false;
+        }
     }
 
     live_ = LiveReadings{};
@@ -1010,6 +1045,7 @@ bool SensorManager::init()
     last_link_probe_ms_ = 0;
     last_saved_accuracy_ = 0;
     iaq_stuck_since_ms_ = 0;
+    iaq_stuck_recovery_done_ = false;
 
     bme_wire_ = &Wire;
     bme_addr_ = cfg::pins::kBmeAddressConfigured;
@@ -1024,7 +1060,7 @@ bool SensorManager::init()
 
     if (!main_bus_ready_)
     {
-        Wire.begin();
+        // Main I2C bus is expected to be initialized by UI touch init path.
         main_bus_ready_ = true;
     }
     Wire.setClock(400000);
@@ -1089,8 +1125,11 @@ bool SensorManager::init()
         return false;
     }
 
-    // Recommended for enclosed products where sensor board self-heating exists.
-    bsec_.setTemperatureOffset(1.5f);
+    // Apply only when a measured and intentional compensation value is configured.
+    if (fabsf(cfg::sensor::kBsecTemperatureOffsetC) > 0.01f)
+    {
+        bsec_.setTemperatureOffset(cfg::sensor::kBsecTemperatureOffsetC);
+    }
 
     if (!bsec_.setConfig(kBsecIaqConfig))
     {
@@ -1113,24 +1152,19 @@ bool SensorManager::init()
         BSEC_OUTPUT_RAW_GAS,
     };
 
-    struct RateCandidate
-    {
-        float rate;
-    };
-
-    const RateCandidate rates[] = {
-        {BSEC_SAMPLE_RATE_LP},
-        {BSEC_SAMPLE_RATE_SCAN},
+    const float rates[] = {
+        BSEC_SAMPLE_RATE_LP,
+        BSEC_SAMPLE_RATE_SCAN,
     };
 
     bool subscribed = false;
-    for (const RateCandidate &candidate : rates)
+    for (float candidate_rate : rates)
     {
         if (bsec_.updateSubscription(sensor_list,
                                      static_cast<uint8_t>(sizeof(sensor_list) / sizeof(sensor_list[0])),
-                                     candidate.rate))
+                                     candidate_rate))
         {
-            active_bsec_rate_ = candidate.rate;
+            active_bsec_rate_ = candidate_rate;
             stale_reinit_ms_ = computeStaleReinitMs(active_bsec_rate_);
             subscribed = true;
             break;
@@ -1146,27 +1180,8 @@ bool SensorManager::init()
 
     bsec_.attachCallback(SensorManager::bsecCallbackBridge);
 
-    const uint32_t warmup_start = millis();
-    while ((millis() - warmup_start < 4000U) && !live_.has_new_sample)
-    {
-        bsec_.run();
-        delay(40);
-    }
-
-    if (live_.has_new_sample)
-    {
-        const uint32_t now_ms = millis();
-        publishSnapshot(now_ms);
-        last_publish_ms_ = now_ms;
-        last_sample_ms_ = now_ms;
-        last_saved_accuracy_ = live_.iaq_accuracy;
-    }
-    else
-    {
-        last_publish_ms_ = 0;
-        last_sample_ms_ = 0;
-    }
-
+    last_publish_ms_ = 0;
+    last_sample_ms_.store(0U, std::memory_order_relaxed);
     last_state_save_ms_ = millis();
     return true;
 }
@@ -1178,6 +1193,12 @@ void SensorManager::bsecCallbackBridge(const bme68xData /*data*/, const bsecOutp
 
 void SensorManager::onBsecOutputs(const bsecOutputs &outputs)
 {
+    ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(20));
+    if (!guard.ownsLock())
+    {
+        return;
+    }
+
     bool has_output = false;
 
     for (uint8_t i = 0; i < outputs.nOutputs; ++i)
@@ -1223,6 +1244,7 @@ void SensorManager::onBsecOutputs(const bsecOutputs &outputs)
             has_output = true;
             break;
         case BSEC_OUTPUT_RAW_GAS:
+            // BSEC2 output is in Ohm; convert to kOhm for UI and logs.
             if (isfinite(out.signal) && (out.signal > 0.0f))
             {
                 live_.gas_resistance_kohm = out.signal / 1000.0f;
@@ -1244,7 +1266,7 @@ void SensorManager::onBsecOutputs(const bsecOutputs &outputs)
 
     if (has_output)
     {
-        last_sample_ms_ = millis();
+        last_sample_ms_.store(millis(), std::memory_order_relaxed);
         live_.has_new_sample = true;
     }
 }
@@ -1330,6 +1352,20 @@ void SensorManager::printIaqModelStatus(Stream &out) const
                static_cast<unsigned long>(iaq_rollback_count_));
 }
 
+void SensorManager::printIaqModelDigest(Stream &out) const
+{
+    const SensorData snapshot = getData();
+    out.printf("[IAQ] digest state=%u conf=%u%% acc=%u runin=%.0f stab=%.0f hist=%lu/%lu eff=%.1f\n",
+               snapshot.iaq_model_state,
+               snapshot.iaq_model_confidence,
+               snapshot.iaq_accuracy,
+               snapshot.run_in_status,
+               snapshot.stabilization_status,
+               static_cast<unsigned long>(iaq_history_count_),
+               static_cast<unsigned long>(kIaqAdaptiveHistoryCapacity),
+               snapshot.iaq_effective);
+}
+
 void SensorManager::resetIaqAdaptiveModel(bool clear_history)
 {
     iaq_reference_gas_kohm_ = NAN;
@@ -1339,7 +1375,7 @@ void SensorManager::resetIaqAdaptiveModel(bool clear_history)
     iaq_adaptive_samples_ = 0;
     iaq_rollback_count_ = 0;
     iaq_model_confidence_ = 0;
-    iaq_model_state_ = kIaqModelLearning;
+    iaq_model_state_ = cfg::sensor::kIaqModelLearning;
     iaq_last_bucket_ms_ = 0;
     iaq_last_state_save_ms_ = 0;
     iaq_last_digest_ms_ = 0;
@@ -1358,7 +1394,7 @@ void SensorManager::resetIaqAdaptiveModel(bool clear_history)
     live_.iaq_effective = NAN;
     live_.iaq_adaptive_delta = 0.0f;
     live_.iaq_model_confidence = 0;
-    live_.iaq_model_state = kIaqModelLearning;
+    live_.iaq_model_state = cfg::sensor::kIaqModelLearning;
 
     if (ensureIaqStoreReady())
     {
@@ -1379,7 +1415,7 @@ void SensorManager::printHelp(Stream &out) const
     out.println("[CMD] i2c scan                 -> run quick main/alt I2C scan now");
     out.println("[CMD] debug detail on|off      -> force detailed debug output");
     out.println("[CMD] iaq model status         -> show adaptive IAQ model diagnostics");
-    out.println("[CMD] iaq model digest         -> show concise adaptive health digest");
+    out.println("[CMD] iaq model digest         -> show concise adaptive runtime digest");
     out.println("[CMD] iaq model reset          -> clear adaptive IAQ model + history");
 }
 
@@ -1488,7 +1524,18 @@ void SensorManager::taskLoop()
 
         run_fail_streak = 0;
 
-        if (live_.has_new_sample)
+        bool has_new_sample = false;
+        uint8_t latest_accuracy = 0;
+        {
+            ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(20));
+            if (guard.ownsLock())
+            {
+                has_new_sample = live_.has_new_sample;
+                latest_accuracy = live_.iaq_accuracy;
+            }
+        }
+
+        if (has_new_sample)
         {
             const bool publish_due = (last_publish_ms_ == 0U) ||
                                      (now_ms - last_publish_ms_ >= cfg::timing::kSensorRefreshMs);
@@ -1497,9 +1544,13 @@ void SensorManager::taskLoop()
                 updateIaqAdaptiveModel(now_ms);
                 publishSnapshot(now_ms);
                 last_publish_ms_ = now_ms;
-            }
 
-            const uint8_t latest_accuracy = live_.iaq_accuracy;
+                ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(20));
+                if (guard.ownsLock())
+                {
+                    latest_accuracy = live_.iaq_accuracy;
+                }
+            }
 
             if ((latest_accuracy > last_saved_accuracy_) ||
                 (now_ms - last_state_save_ms_ >= cfg::timing::kBsecStateSaveMs))
@@ -1522,7 +1573,8 @@ void SensorManager::taskLoop()
             }
         }
 
-        if ((last_sample_ms_ != 0U) && (now_ms - last_sample_ms_ > stale_reinit_ms_))
+        const uint32_t last_sample_ms = last_sample_ms_.load(std::memory_order_relaxed);
+        if ((last_sample_ms != 0U) && (now_ms - last_sample_ms > stale_reinit_ms_))
         {
             healthy_ = false;
             vTaskDelay(wait_ticks);
