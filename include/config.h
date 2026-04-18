@@ -59,9 +59,12 @@ namespace cfg
         inline constexpr uint32_t kBsecStateSaveMs = 4UL * 60UL * 60UL * 1000UL; // 4 Hours
         inline constexpr uint32_t kBsecStateSaveMinGapMs = 10UL * 60UL * 1000UL; // 10 Minutes
 
-        inline constexpr uint32_t kCpuLoadRefreshMs = kSensorRefreshMs;
-        inline constexpr uint32_t kSysInfoRefreshMs = kSensorRefreshMs;
-        inline constexpr uint32_t kUiValuesRefreshMs = 1000UL;
+        inline constexpr uint32_t kCpuLoadRefreshMs = 3000UL;
+        inline constexpr uint32_t kSysInfoRefreshMs = 30000UL;
+        inline constexpr uint32_t kWifiStatusRefreshMs = 5000UL;
+        inline constexpr uint32_t kLastFetchLabelRefreshMs = 30000UL;
+        // Page data refresh policy: do not update too frequently.
+        inline constexpr uint32_t kUiValuesRefreshMs = 30000UL;
         inline constexpr uint32_t kUptimeRefreshMs = 1000UL;
     }
 
@@ -142,6 +145,7 @@ namespace cfg
     namespace wifi
     {
         inline constexpr uint32_t kTaskDelayMs = 500UL;
+        inline constexpr uint32_t kBootConnectWindowMs = 10000UL;
         inline constexpr uint32_t kConnectTimeoutMs = 15000UL;
         inline constexpr uint32_t kReconnectIntervalMs = 30000UL;
         inline constexpr uint8_t kReconnectMaxAttempts = 3;

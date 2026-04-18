@@ -17,8 +17,7 @@ The system runs in two main FreeRTOS loops on separate cores:
 
 Important principles:
 
-- The sensor is processed in real-time by BSEC (`run()` is called frequently), not every 30 seconds.
-- Sensor data publishing remains every `kSensorRefreshMs` (default 30 seconds), while UI labels can refresh each second to keep status text responsive.
+- Sensor and UI value refresh policy follows a fixed 30-second cadence for stable, low-noise updates on Page 01 (`kSensorRefreshMs` / `kUiValuesRefreshMs`).
 - If data is temporarily invalid, the UI retains the last valid snapshot (anti-flicker), and will display NO DATA if it truly becomes stale.
 
 ## Project Structure Overview
@@ -41,10 +40,10 @@ src/
 ## Features
 
 - **Real-time Environment Data**: Temperature, Humidity, Air Pressure, and calculated Altitude.
-- **Gas Monitoring (Page 02)**: Gas Resolution gauge, large Gas Status label, and 5-minute Gas Trend (Rising/Stable/Falling).
+- **Gas Monitoring (Page 02)**: Gas Resolution gauge, large Gas Status label, and 5-minute Gas Trend (Rising/Stable/Falling) computed against a rolling 30-second gas history baseline.
 - **System Telemetry**: UI task load estimate, Uptime counter, and Battery Percentage.
 - **Connectivity Detail (Page 03)**: WiFi status indicator (green connected / red offline), Last Fetch timestamp (`HH:MM:SS`), CPU Load (%), and Storage.
-- **Online Weather Context**: Open-Meteo fetches **surface pressure only** every 10 minutes in online mode.
+- **Online Weather Context**: Open-Meteo fetches **MSL pressure (`pressure_msl`)** every 10 minutes in online mode.
 - **Power Optimization**: Background sensor processing with reduced screen redraws.
 - **Serial Diagnostics**: Built-in CLI for status checks and manual calibration.
 - **Extended Boot Self-Check**: Verifies display, touch, sensor init, fresh data, and WiFi boot state before entering runtime.
@@ -54,8 +53,12 @@ src/
 
 - Display timeout: **15 seconds** of inactivity.
 - Sensor publish interval to UI: **30 seconds** (`kSensorRefreshMs`).
-- UI value refresh cadence: **1 second** (`kUiValuesRefreshMs`).
+- UI value refresh cadence (Page 01 / Page 02): **30 seconds** (`kUiValuesRefreshMs`).
 - Uptime label refresh: **1 second**.
+- Page 03 CPU Load refresh: **3 seconds**.
+- Page 03 Storage refresh: **30 seconds**.
+- Page 03 WiFi Status refresh: **5 seconds**.
+- Page 03 Last Fetch label refresh: **30 seconds**.
 - Boot data verification window: **up to 15 seconds**.
 - Open-Meteo refresh interval: **10 minutes**, active only in online mode.
 - Reconnect policy after runtime disconnect: **every 30 seconds up to 3 attempts**, then offline mode.
@@ -220,8 +223,8 @@ Available commands:
 - `debug detail on`: Turn on periodic verbose debugging
 - `debug detail off`: Turn off verbose debugging
 - `wifi status`: Show WiFi state + weather context status
-- `weather status`: Show latest Open-Meteo **surface pressure** snapshot and age
-- `weather fetch now`: Trigger immediate Open-Meteo fetch
+- `weather status`: Show latest Open-Meteo **pressure_msl** snapshot and age
+- `weather fetch now`: Trigger immediate Open-Meteo fetch (includes explicit failure reason)
 
 Weather runtime policy:
 
@@ -230,7 +233,7 @@ Weather runtime policy:
 - If runtime link drops while previously online, firmware retries every 30 seconds up to 3 attempts.
 - After 3 failed retries, firmware locks into offline mode (no aggressive reconnect loop).
 - Open-Meteo scheduler is disabled while offline and resumes automatically when online.
-- Altitude uses local sensor pressure with a bounded blend from Open-Meteo surface pressure reference for more stable readout.
+- Altitude uses local sensor pressure with a bounded blend from Open-Meteo pressure reference for more stable readout.
 
 Boot production checklist:
 

@@ -193,7 +193,7 @@ void SerialCLI::handleCommand(char *line)
         }
         else
         {
-            Serial.println("[CMD] weather fetch failed (offline or internet unavailable).");
+            Serial.printf("[CMD] weather fetch failed (reason=%s).\n", WiFiManager::instance().lastErrorText());
         }
         return;
     }

@@ -47,6 +47,20 @@ namespace
     return result;
   }
 
+  bool waitForBootWifiConnection(WiFiManager &wifi_manager)
+  {
+    const uint32_t start_ms = millis();
+    while (millis() - start_ms < cfg::wifi::kBootConnectWindowMs)
+    {
+      if (wifi_manager.isConnected())
+      {
+        return true;
+      }
+      delay(120);
+    }
+    return wifi_manager.isConnected();
+  }
+
   void printBootReadinessChecklist(const BootDiagStatus &boot_status, SensorManager &sensor_manager)
   {
     const SensorData snapshot = sensor_manager.getData();
@@ -106,14 +120,22 @@ void setup()
   TaskHandle_t sensor_task_handle = nullptr;
   xTaskCreatePinnedToCore(SensorManager::taskEntry, "sensorTask", 8192, &sensor_manager, 2, &sensor_task_handle, 0);
   TaskHandle_t wifi_task_handle = nullptr;
-  xTaskCreatePinnedToCore(WiFiManager::taskEntry, "wifiTask", 8192, &wifi_manager, 1, &wifi_task_handle, 1);
+  xTaskCreatePinnedToCore(WiFiManager::taskEntry, "wifiTask", 8192, &wifi_manager, 1, &wifi_task_handle, 0);
+
+  boot_status.wifi_ok = waitForBootWifiConnection(wifi_manager);
+  if (boot_status.wifi_ok)
+  {
+    // Enforce one immediate fetch on successful boot connection.
+    wifi_manager.forceFetchNow();
+  }
+  ui.bootDiagUpdate(boot_status);
 
   if (boot_status.sensor_ok)
   {
     const BootDataCheckResult check = verifySensorData(sensor_manager);
     boot_status.data_done = true;
     boot_status.data_ok = check.data_ok;
-    boot_status.wifi_ok = wifi_manager.isConnected() && wifi_manager.isOnlineMode();
+    boot_status.wifi_ok = wifi_manager.isConnected();
 
     ui.bootDiagUpdate(boot_status);
   }
@@ -121,7 +143,7 @@ void setup()
   {
     boot_status.data_done = true;
     boot_status.data_ok = false;
-    boot_status.wifi_ok = wifi_manager.isConnected() && wifi_manager.isOnlineMode();
+    boot_status.wifi_ok = wifi_manager.isConnected();
     ui.bootDiagUpdate(boot_status);
   }
 

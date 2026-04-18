@@ -167,7 +167,7 @@ private:
         uint32_t ts_ms = 0;
         float gas_kohm = NAN;
     };
-    static constexpr size_t kGasHistoryCapacity = 180; // ~6h @ 2min cadence
+    static constexpr size_t kGasHistoryCapacity = 180; // ~90min @ 30s cadence
     GasHistoryEntry gas_history_[kGasHistoryCapacity]{};
     size_t gas_history_count_ = 0;
     uint32_t gas_history_last_push_ms_ = 0;

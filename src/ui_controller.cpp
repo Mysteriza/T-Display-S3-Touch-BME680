@@ -357,13 +357,13 @@ namespace
     {
         if (trend > 0)
         {
-            return cfg::color::kStatusOk;
+            return cfg::color::kError;
         }
         if (trend < 0)
         {
-            return cfg::color::kError;
+            return cfg::color::kBootChecking;
         }
-        return cfg::color::kBootChecking;
+        return cfg::color::kStatusOk;
     }
 }
 
@@ -1172,130 +1172,139 @@ void UiController::updateValues()
         lv_label_set_text(page_sys_.uptime, uptime);
     }
 
-    if ((last_ui_refresh_ms_ != 0U) && (now_ms - last_ui_refresh_ms_ < cfg::timing::kUiValuesRefreshMs))
+    const bool sensor_pages_due = (last_ui_refresh_ms_ == 0U) ||
+                                  (now_ms - last_ui_refresh_ms_ >= cfg::timing::kUiValuesRefreshMs);
+    if (sensor_pages_due)
     {
-        return;
-    }
-    last_ui_refresh_ms_ = now_ms;
+        last_ui_refresh_ms_ = now_ms;
 
-    SensorManager &sensor_manager = SensorManager::instance();
-    const SensorData data = sensor_manager.getData();
-    uint32_t data_age_ms = UINT32_MAX;
-    if (data.last_update_ms != 0U)
-    {
-        data_age_ms = now_ms - data.last_update_ms;
-    }
-    const uint32_t hold_window_ms = cfg::timing::kSensorStaleReinitMs + cfg::timing::kSensorLinkProbeMs;
-    const bool hold_recent_snapshot = (data.last_update_ms != 0U) && (data_age_ms <= hold_window_ms);
-
-    const bool sensor_connected_now = sensor_manager.isRealtimeConnected();
-    const lv_color_t header_color = sensor_connected_now ? lv_color_hex(cfg::color::kValue) : lv_color_hex(cfg::color::kError);
-    for (uint8_t i = 0; i < 3U; ++i)
-    {
-        if (env_headers_[i] != nullptr)
+        SensorManager &sensor_manager = SensorManager::instance();
+        const SensorData data = sensor_manager.getData();
+        uint32_t data_age_ms = UINT32_MAX;
+        if (data.last_update_ms != 0U)
         {
-            lv_obj_set_style_text_color(env_headers_[i], header_color, 0);
+            data_age_ms = now_ms - data.last_update_ms;
         }
-    }
+        const uint32_t hold_window_ms = cfg::timing::kSensorStaleReinitMs + cfg::timing::kSensorLinkProbeMs;
+        const bool hold_recent_snapshot = (data.last_update_ms != 0U) && (data_age_ms <= hold_window_ms);
 
-    char text[64] = {0};
-
-    if (data.valid || hold_recent_snapshot)
-    {
-        const bool env_values_due = (data.last_update_ms != 0U) && (data.last_update_ms != last_env_snapshot_ms_);
-        if (env_values_due)
+        const bool sensor_connected_now = sensor_manager.isRealtimeConnected();
+        const lv_color_t header_color = sensor_connected_now ? lv_color_hex(cfg::color::kValue) : lv_color_hex(cfg::color::kError);
+        for (uint8_t i = 0; i < 3U; ++i)
         {
-            last_env_snapshot_ms_ = data.last_update_ms;
-
-            snprintf(text, sizeof(text), "%.2f C", data.temperature_c);
-            lv_label_set_text(page_env_.temp, text);
-            lv_obj_set_style_text_color(page_env_.temp, lv_color_hex(tempValueColor(data.temperature_c)), 0);
-
-            snprintf(text, sizeof(text), "%.2f %%", data.humidity_pct);
-            lv_label_set_text(page_env_.humidity, text);
-            lv_obj_set_style_text_color(page_env_.humidity, lv_color_hex(humidityValueColor(data.humidity_pct)), 0);
-
-            snprintf(text, sizeof(text), "%.2f hPa", data.pressure_hpa);
-            lv_label_set_text(page_env_.pressure, text);
-
-            snprintf(text, sizeof(text), "%.1f m", data.altitude_m);
-            lv_label_set_text(page_env_.altitude, text);
+            if (env_headers_[i] != nullptr)
+            {
+                lv_obj_set_style_text_color(env_headers_[i], header_color, 0);
+            }
         }
 
-        const float gas_kohm = data.gas_resistance_kohm;
-        const uint32_t gas_color = gasValueColor(gas_kohm);
-        const int32_t gas_arc_value = clampI32(roundToInt(gas_kohm),
-                                               static_cast<int32_t>(cfg::sensor::kGasGaugeMinKohm),
-                                               static_cast<int32_t>(cfg::sensor::kGasGaugeMaxKohm));
-        if (isfinite(gas_kohm))
+        char text[64] = {0};
+
+        if (data.valid || hold_recent_snapshot)
         {
-            const int32_t gas_kohm_int = roundToInt(gas_kohm);
-            snprintf(text, sizeof(text), "%ld kOhm", static_cast<long>(gas_kohm_int));
+            const bool env_values_due = (data.last_update_ms != 0U) && (data.last_update_ms != last_env_snapshot_ms_);
+            if (env_values_due)
+            {
+                last_env_snapshot_ms_ = data.last_update_ms;
+
+                snprintf(text, sizeof(text), "%.2f C", data.temperature_c);
+                lv_label_set_text(page_env_.temp, text);
+                lv_obj_set_style_text_color(page_env_.temp, lv_color_hex(tempValueColor(data.temperature_c)), 0);
+
+                snprintf(text, sizeof(text), "%.2f %%", data.humidity_pct);
+                lv_label_set_text(page_env_.humidity, text);
+                lv_obj_set_style_text_color(page_env_.humidity, lv_color_hex(humidityValueColor(data.humidity_pct)), 0);
+
+                snprintf(text, sizeof(text), "%.2f hPa", data.pressure_hpa);
+                lv_label_set_text(page_env_.pressure, text);
+
+                snprintf(text, sizeof(text), "%.1f m", data.altitude_m);
+                lv_label_set_text(page_env_.altitude, text);
+            }
+
+            const float gas_kohm = data.gas_resistance_kohm;
+            const uint32_t gas_color = gasValueColor(gas_kohm);
+            const int32_t gas_arc_value = clampI32(roundToInt(gas_kohm),
+                                                   static_cast<int32_t>(cfg::sensor::kGasGaugeMinKohm),
+                                                   static_cast<int32_t>(cfg::sensor::kGasGaugeMaxKohm));
+            if (isfinite(gas_kohm))
+            {
+                const int32_t gas_kohm_int = roundToInt(gas_kohm);
+                snprintf(text, sizeof(text), "%ld kOhm", static_cast<long>(gas_kohm_int));
+            }
+            else
+            {
+                snprintf(text, sizeof(text), "-- kOhm");
+            }
+            lv_label_set_text(page_aqi_.gas_value, text);
+            lv_obj_set_style_text_color(page_aqi_.gas_value, lv_color_hex(gas_color), 0);
+            lv_arc_set_value(page_aqi_.gas_arc, gas_arc_value);
+            lv_obj_set_style_arc_color(page_aqi_.gas_arc, lv_color_hex(gas_color), LV_PART_INDICATOR);
+
+            lv_label_set_text(page_aqi_.gas_status_value, gasStatusText(gas_kohm));
+            lv_obj_set_style_text_color(page_aqi_.gas_status_value, lv_color_hex(gas_color), 0);
+
+            lv_label_set_text(page_aqi_.gas_trend_value, gasTrendText(data.gas_trend_5m));
+            lv_obj_set_style_text_color(page_aqi_.gas_trend_value, lv_color_hex(gasTrendColor(data.gas_trend_5m)), 0);
         }
         else
         {
-            snprintf(text, sizeof(text), "-- kOhm");
+            last_env_snapshot_ms_ = 0;
+            lv_label_set_text(page_env_.temp, "--.- C");
+            lv_obj_set_style_text_color(page_env_.temp, lv_color_hex(cfg::color::kValue), 0);
+            lv_label_set_text(page_env_.humidity, "--.- %");
+            lv_obj_set_style_text_color(page_env_.humidity, lv_color_hex(cfg::color::kValue), 0);
+            lv_label_set_text(page_env_.pressure, "----.-- hPa");
+            lv_label_set_text(page_env_.altitude, "---.- m");
+
+            lv_label_set_text(page_aqi_.gas_value, "-- kOhm");
+            lv_obj_set_style_text_color(page_aqi_.gas_value, lv_color_hex(cfg::color::kTextDim), 0);
+            lv_label_set_text(page_aqi_.gas_status_value, "No Data");
+            lv_obj_set_style_text_color(page_aqi_.gas_status_value, lv_color_hex(cfg::color::kTextDim), 0);
+            lv_label_set_text(page_aqi_.gas_trend_value, "Stable");
+            lv_obj_set_style_text_color(page_aqi_.gas_trend_value, lv_color_hex(cfg::color::kTextDim), 0);
+            lv_obj_set_style_arc_color(page_aqi_.gas_arc, lv_color_hex(cfg::color::kBootChecking), LV_PART_INDICATOR);
+            lv_arc_set_value(page_aqi_.gas_arc, 0);
         }
-        lv_label_set_text(page_aqi_.gas_value, text);
-        lv_obj_set_style_text_color(page_aqi_.gas_value, lv_color_hex(gas_color), 0);
-        lv_arc_set_value(page_aqi_.gas_arc, gas_arc_value);
-        lv_obj_set_style_arc_color(page_aqi_.gas_arc, lv_color_hex(gas_color), LV_PART_INDICATOR);
-
-        lv_label_set_text(page_aqi_.gas_status_value, gasStatusText(gas_kohm));
-        lv_obj_set_style_text_color(page_aqi_.gas_status_value, lv_color_hex(gas_color), 0);
-
-        lv_label_set_text(page_aqi_.gas_trend_value, gasTrendText(data.gas_trend_5m));
-        lv_obj_set_style_text_color(page_aqi_.gas_trend_value, lv_color_hex(gasTrendColor(data.gas_trend_5m)), 0);
-    }
-    else
-    {
-        last_env_snapshot_ms_ = 0;
-        lv_label_set_text(page_env_.temp, "--.- C");
-        lv_obj_set_style_text_color(page_env_.temp, lv_color_hex(cfg::color::kValue), 0);
-        lv_label_set_text(page_env_.humidity, "--.- %");
-        lv_obj_set_style_text_color(page_env_.humidity, lv_color_hex(cfg::color::kValue), 0);
-        lv_label_set_text(page_env_.pressure, "----.-- hPa");
-        lv_label_set_text(page_env_.altitude, "---.- m");
-
-        lv_label_set_text(page_aqi_.gas_value, "-- kOhm");
-        lv_obj_set_style_text_color(page_aqi_.gas_value, lv_color_hex(cfg::color::kTextDim), 0);
-        lv_label_set_text(page_aqi_.gas_status_value, "No Data");
-        lv_obj_set_style_text_color(page_aqi_.gas_status_value, lv_color_hex(cfg::color::kTextDim), 0);
-        lv_label_set_text(page_aqi_.gas_trend_value, "Stable");
-        lv_obj_set_style_text_color(page_aqi_.gas_trend_value, lv_color_hex(cfg::color::kTextDim), 0);
-        lv_obj_set_style_arc_color(page_aqi_.gas_arc, lv_color_hex(cfg::color::kBootChecking), LV_PART_INDICATOR);
-        lv_arc_set_value(page_aqi_.gas_arc, 0);
     }
 
     {
         WiFiManager &wifi = WiFiManager::instance();
-        const bool wifi_online = wifi.isConnected() && wifi.isOnlineMode();
-        lv_label_set_text(page_sys_.wifi_status, wifi_online ? "Connected" : "Offline");
-        lv_obj_set_style_text_color(page_sys_.wifi_status,
-                                    lv_color_hex(wifi_online ? cfg::color::kStatusOk : cfg::color::kError),
-                                    0);
-
-        const WeatherSnapshot weather = wifi.getSnapshot();
-        if (!weather.valid || (weather.last_update_ms == 0U) || !wifi.hasFreshWeather(now_ms))
+        if ((last_wifi_status_refresh_ms_ == 0U) || (now_ms - last_wifi_status_refresh_ms_ >= cfg::timing::kWifiStatusRefreshMs))
         {
-            lv_label_set_text(page_sys_.weather_update, "--:--:--");
-            lv_obj_set_style_text_color(page_sys_.weather_update, lv_color_hex(cfg::color::kTextDim), 0);
-        }
-        else
-        {
-            const uint32_t day_seconds = 24UL * 60UL * 60UL;
-            const uint32_t fetch_seconds = (weather.last_update_ms / 1000UL) % day_seconds;
-            const uint32_t hh = fetch_seconds / 3600UL;
-            const uint32_t mm = (fetch_seconds % 3600UL) / 60UL;
-            const uint32_t ss = fetch_seconds % 60UL;
-            lv_label_set_text_fmt(page_sys_.weather_update,
-                                  "%02lu:%02lu:%02lu",
-                                  static_cast<unsigned long>(hh),
-                                  static_cast<unsigned long>(mm),
-                                  static_cast<unsigned long>(ss));
-            lv_obj_set_style_text_color(page_sys_.weather_update,
-                                        lv_color_hex(wifi.isOnlineMode() ? cfg::color::kValue : cfg::color::kBootChecking),
+            last_wifi_status_refresh_ms_ = now_ms;
+            const bool wifi_connected = wifi.isConnected();
+            lv_label_set_text(page_sys_.wifi_status, wifi_connected ? "Connected" : "Offline");
+            lv_obj_set_style_text_color(page_sys_.wifi_status,
+                                        lv_color_hex(wifi_connected ? cfg::color::kStatusOk : cfg::color::kError),
                                         0);
+        }
+
+        if ((last_fetch_label_refresh_ms_ == 0U) || (now_ms - last_fetch_label_refresh_ms_ >= cfg::timing::kLastFetchLabelRefreshMs))
+        {
+            last_fetch_label_refresh_ms_ = now_ms;
+            const WeatherSnapshot weather = wifi.getSnapshot();
+            if (!weather.valid || (weather.last_update_ms == 0U) || !wifi.hasFreshWeather(now_ms))
+            {
+                lv_label_set_text(page_sys_.weather_update, "--:--:--");
+                lv_obj_set_style_text_color(page_sys_.weather_update, lv_color_hex(cfg::color::kTextDim), 0);
+            }
+            else
+            {
+                const uint32_t day_seconds = 24UL * 60UL * 60UL;
+                const uint32_t fetch_seconds = (weather.last_update_ms / 1000UL) % day_seconds;
+                const uint32_t hh = fetch_seconds / 3600UL;
+                const uint32_t mm = (fetch_seconds % 3600UL) / 60UL;
+                const uint32_t ss = fetch_seconds % 60UL;
+                lv_label_set_text_fmt(page_sys_.weather_update,
+                                      "%02lu:%02lu:%02lu",
+                                      static_cast<unsigned long>(hh),
+                                      static_cast<unsigned long>(mm),
+                                      static_cast<unsigned long>(ss));
+                lv_obj_set_style_text_color(page_sys_.weather_update,
+                                            lv_color_hex(wifi.isOnlineMode() ? cfg::color::kValue : cfg::color::kBootChecking),
+                                            0);
+            }
         }
     }
 

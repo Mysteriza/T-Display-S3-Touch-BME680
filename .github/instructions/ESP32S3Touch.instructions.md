@@ -30,6 +30,7 @@ Act as an Embedded Architect AI Agent for the Lilygo ESP32-S3 T-Display S3 Touch
 ## 4. FUNCTIONAL LOGIC & UI UX
 
 - **Boot Sequence:** Perform hardware check (LCD, Touch, BME680, etc). Display results: [OK] in Green, [FAIL] in Red.
+- **Current Project Override (MANDATORY):** Page 01 sensor reading + UI value refresh must stay at 30 seconds cadence. Do not introduce sub-second or high-frequency value updates unless user explicitly asks.
 - **Smart Timeout:** - Screen turns OFF after 15s (default) of inactivity.
   - Reset timer on: Touch event OR GPIO 14 press. Both MUST wake the screen.
 - **Uptime Logic:** Implement a robust formatter to display uptime as `HH:MM:SS` from `esp_timer_get_time()`.

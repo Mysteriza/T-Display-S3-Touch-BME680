@@ -27,6 +27,7 @@ public:
     WeatherSnapshot getSnapshot() const;
 
     bool forceFetchNow();
+    const char *lastErrorText() const;
     void printStatus(Stream &out) const;
 
 private:
@@ -43,11 +44,24 @@ private:
         OfflineLocked,
     };
 
+    enum class FetchError : uint8_t
+    {
+        None = 0,
+        NotConnected,
+        HttpBeginFailed,
+        HttpStatusFailed,
+        EmptyPayload,
+        ParseFailed,
+        PressureOutOfRange,
+        MutexTimeout,
+    };
+
     bool connectWithTimeout(uint32_t timeout_ms);
     bool fetchOpenMeteo();
     bool parseWeatherPayload(const String &payload, WeatherSnapshot &snapshot) const;
     bool parseNumberAfterKey(const String &src, const char *key, float &out_value) const;
     void setRuntimeState(State state, bool connected, bool online_mode, uint8_t reconnect_attempts);
+    void setFetchError(FetchError error, int http_code = 0);
 
 private:
     mutable SemaphoreHandle_t mutex_ = nullptr;
@@ -60,6 +74,8 @@ private:
     uint32_t state_since_ms_ = 0;
     uint32_t last_fetch_ms_ = 0;
     uint32_t last_reconnect_try_ms_ = 0;
+    FetchError last_fetch_error_ = FetchError::None;
+    int last_http_status_code_ = 0;
 
     WeatherSnapshot snapshot_{};
 };

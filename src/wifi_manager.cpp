@@ -13,6 +13,18 @@ WiFiManager &WiFiManager::instance()
     return manager;
 }
 
+void WiFiManager::setFetchError(FetchError error, int http_code)
+{
+    if ((mutex_ == nullptr) || (xSemaphoreTake(mutex_, pdMS_TO_TICKS(60)) != pdTRUE))
+    {
+        return;
+    }
+
+    last_fetch_error_ = error;
+    last_http_status_code_ = http_code;
+    xSemaphoreGive(mutex_);
+}
+
 void WiFiManager::init()
 {
     if (mutex_ == nullptr)
@@ -85,7 +97,9 @@ bool WiFiManager::parseNumberAfterKey(const String &src, const char *key, float 
     }
 
     ++colon;
-    while ((colon < src.length()) && ((src[colon] == ' ') || (src[colon] == '\t') || (src[colon] == '"')))
+    while ((colon < src.length()) &&
+           ((src[colon] == ' ') || (src[colon] == '\t') || (src[colon] == '\r') || (src[colon] == '\n') ||
+            (src[colon] == '"') || (src[colon] == '[')))
     {
         ++colon;
     }
@@ -109,7 +123,12 @@ bool WiFiManager::parseWeatherPayload(const String &payload, WeatherSnapshot &sn
 {
     float pressure = NAN;
 
-    const bool ok_pressure = parseNumberAfterKey(payload, "\"surface_pressure\"", pressure);
+    bool ok_pressure = parseNumberAfterKey(payload, "\"pressure_msl\"", pressure);
+    if (!ok_pressure)
+    {
+        // Backward-compatible fallback for payload variants exposing current surface_pressure.
+        ok_pressure = parseNumberAfterKey(payload, "\"surface_pressure\"", pressure);
+    }
 
     if (!ok_pressure)
     {
@@ -126,6 +145,7 @@ bool WiFiManager::fetchOpenMeteo()
 {
     if (WiFi.status() != WL_CONNECTED)
     {
+        setFetchError(FetchError::NotConnected);
         return false;
     }
 
@@ -135,7 +155,8 @@ bool WiFiManager::fetchOpenMeteo()
     url += String(cfg::wifi::kLatitudeDefault, 4);
     url += "&longitude=";
     url += String(cfg::wifi::kLongitudeDefault, 4);
-    url += "&current=surface_pressure";
+    url += "&hourly=pressure_msl";
+    url += "&forecast_days=1";
 
     WiFiClientSecure secure_client;
     secure_client.setInsecure();
@@ -144,6 +165,7 @@ bool WiFiManager::fetchOpenMeteo()
     http.setTimeout(static_cast<uint16_t>(cfg::wifi::kWeatherHttpTimeoutMs));
     if (!http.begin(secure_client, url))
     {
+        setFetchError(FetchError::HttpBeginFailed);
         return false;
     }
 
@@ -151,30 +173,41 @@ bool WiFiManager::fetchOpenMeteo()
     if (code != HTTP_CODE_OK)
     {
         http.end();
+        setFetchError(FetchError::HttpStatusFailed, code);
         return false;
     }
 
     const String payload = http.getString();
     http.end();
+    if (payload.length() == 0)
+    {
+        setFetchError(FetchError::EmptyPayload);
+        return false;
+    }
 
     WeatherSnapshot snapshot{};
     if (!parseWeatherPayload(payload, snapshot))
     {
+        setFetchError(FetchError::ParseFailed);
         return false;
     }
 
     if ((snapshot.surface_pressure_hpa < cfg::sensor::kSeaLevelMinHpa) || (snapshot.surface_pressure_hpa > cfg::sensor::kSeaLevelMaxHpa))
     {
+        setFetchError(FetchError::PressureOutOfRange);
         return false;
     }
 
     if ((mutex_ == nullptr) || (xSemaphoreTake(mutex_, pdMS_TO_TICKS(60)) != pdTRUE))
     {
+        setFetchError(FetchError::MutexTimeout);
         return false;
     }
 
     snapshot_ = snapshot;
     last_fetch_ms_ = snapshot.last_update_ms;
+    last_fetch_error_ = FetchError::None;
+    last_http_status_code_ = HTTP_CODE_OK;
     xSemaphoreGive(mutex_);
     return true;
 }
@@ -246,6 +279,7 @@ bool WiFiManager::forceFetchNow()
 {
     if (WiFi.status() != WL_CONNECTED)
     {
+        setFetchError(FetchError::NotConnected);
         return false;
     }
 
@@ -255,6 +289,38 @@ bool WiFiManager::forceFetchNow()
                     ok,
                     reconnect_attempts_);
     return ok;
+}
+
+const char *WiFiManager::lastErrorText() const
+{
+    if ((mutex_ == nullptr) || (xSemaphoreTake(mutex_, pdMS_TO_TICKS(30)) != pdTRUE))
+    {
+        return "state-lock-timeout";
+    }
+
+    const FetchError err = last_fetch_error_;
+    xSemaphoreGive(mutex_);
+    switch (err)
+    {
+    case FetchError::None:
+        return "ok";
+    case FetchError::NotConnected:
+        return "wifi-not-connected";
+    case FetchError::HttpBeginFailed:
+        return "http-begin-failed";
+    case FetchError::HttpStatusFailed:
+        return "http-status-failed";
+    case FetchError::EmptyPayload:
+        return "empty-payload";
+    case FetchError::ParseFailed:
+        return "payload-parse-failed";
+    case FetchError::PressureOutOfRange:
+        return "pressure-out-of-range";
+    case FetchError::MutexTimeout:
+        return "state-mutex-timeout";
+    }
+
+    return "unknown";
 }
 
 void WiFiManager::setRuntimeState(State state, bool connected, bool online_mode, uint8_t reconnect_attempts)
@@ -279,12 +345,16 @@ void WiFiManager::printStatus(Stream &out) const
     bool connected = false;
     bool online = false;
     uint8_t attempts = 0;
+    FetchError fetch_error = FetchError::None;
+    int http_status = 0;
     if ((mutex_ != nullptr) && (xSemaphoreTake(mutex_, pdMS_TO_TICKS(60)) == pdTRUE))
     {
         state = state_;
         connected = connected_;
         online = online_mode_;
         attempts = reconnect_attempts_;
+        fetch_error = last_fetch_error_;
+        http_status = last_http_status_code_;
         xSemaphoreGive(mutex_);
     }
 
@@ -324,7 +394,13 @@ void WiFiManager::printStatus(Stream &out) const
     }
     else
     {
-        out.println("[WEATHER] no data");
+        out.printf("[WEATHER] no data (fetch not successful yet, reason=%s",
+                   lastErrorText());
+        if (fetch_error == FetchError::HttpStatusFailed)
+        {
+            out.printf(", http=%d", http_status);
+        }
+        out.println(")");
     }
 }
 
@@ -374,6 +450,12 @@ void WiFiManager::taskLoop()
             }
             else
             {
+                if ((mutex_ != nullptr) && (xSemaphoreTake(mutex_, pdMS_TO_TICKS(60)) == pdTRUE))
+                {
+                    reconnect_attempts_ = 0;
+                    last_reconnect_try_ms_ = now_ms;
+                    xSemaphoreGive(mutex_);
+                }
                 WiFi.disconnect(false, false);
                 setRuntimeState(State::OfflineLocked, false, false, 0);
             }
@@ -426,6 +508,12 @@ void WiFiManager::taskLoop()
                 }
                 else if (reconnect_attempts >= cfg::wifi::kReconnectMaxAttempts)
                 {
+                    if ((mutex_ != nullptr) && (xSemaphoreTake(mutex_, pdMS_TO_TICKS(60)) == pdTRUE))
+                    {
+                        reconnect_attempts_ = reconnect_attempts;
+                        last_reconnect_try_ms_ = now_ms;
+                        xSemaphoreGive(mutex_);
+                    }
                     WiFi.disconnect(false, false);
                     setRuntimeState(State::OfflineLocked, false, false, reconnect_attempts);
                 }
@@ -437,7 +525,11 @@ void WiFiManager::taskLoop()
             break;
 
         case State::OfflineLocked:
-            setRuntimeState(State::OfflineLocked, false, false, reconnect_attempts);
+            if ((reconnect_attempts < cfg::wifi::kReconnectMaxAttempts) &&
+                ((last_reconnect_try_ms == 0U) || (now_ms - last_reconnect_try_ms >= cfg::wifi::kReconnectIntervalMs)))
+            {
+                setRuntimeState(State::ReconnectAttempts, false, false, reconnect_attempts);
+            }
             break;
         }
 

@@ -18,7 +18,7 @@ namespace
 
     constexpr uint32_t kDebugIntervalMs = 10000UL;
     constexpr uint32_t kGasTrendWindowMs = 5UL * 60UL * 1000UL;
-    constexpr uint32_t kGasHistoryPushMs = 2UL * 60UL * 1000UL;
+    constexpr uint32_t kGasHistoryPushMs = 30UL * 1000UL;
     constexpr float kGasTrendStableDeltaKohm = 0.35f;
 }
 
@@ -462,19 +462,18 @@ void SensorManager::updateGasTrend(uint32_t now_ms)
         return;
     }
 
-    if ((gas_history_last_push_ms_ != 0U) && ((now_ms - gas_history_last_push_ms_) < kGasHistoryPushMs))
+    const bool push_due = (gas_history_last_push_ms_ == 0U) || ((now_ms - gas_history_last_push_ms_) >= kGasHistoryPushMs);
+    if (push_due)
     {
-        return;
-    }
+        gas_history_last_push_ms_ = now_ms;
 
-    gas_history_last_push_ms_ = now_ms;
-
-    gas_history_[gas_history_head_].ts_ms = now_ms;
-    gas_history_[gas_history_head_].gas_kohm = live_.gas_resistance_kohm;
-    gas_history_head_ = (gas_history_head_ + 1U) % kGasHistoryCapacity;
-    if (gas_history_count_ < kGasHistoryCapacity)
-    {
-        ++gas_history_count_;
+        gas_history_[gas_history_head_].ts_ms = now_ms;
+        gas_history_[gas_history_head_].gas_kohm = live_.gas_resistance_kohm;
+        gas_history_head_ = (gas_history_head_ + 1U) % kGasHistoryCapacity;
+        if (gas_history_count_ < kGasHistoryCapacity)
+        {
+            ++gas_history_count_;
+        }
     }
 
     float baseline = NAN;

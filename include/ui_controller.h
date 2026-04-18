@@ -161,6 +161,8 @@ private:
     uint32_t last_uptime_refresh_ms_ = 0;
     uint32_t last_cpu_refresh_ms_ = 0;
     uint32_t last_sys_info_refresh_ms_ = 0;
+    uint32_t last_wifi_status_refresh_ms_ = 0;
+    uint32_t last_fetch_label_refresh_ms_ = 0;
     uint32_t last_bg_ui_refresh_ms_ = 0;
 
     float cpu_load_estimate_pct_ = 0.0f;
