@@ -45,6 +45,7 @@ src/
 - **Serial Diagnostics**: Built-in CLI for status checks and manual calibration.
 - **Automatic Recovery**: Detects and clears stuck IAQ states automatically.
 - **Extended Boot Self-Check**: Verifies display, touch, sensor init, data pipeline validity, and IAQ pipeline readiness before entering normal runtime.
+- **Advanced Battery SOC Estimator (No Extra Hardware)**: Non-linear Li-ion OCV curve, load-compensated voltage recovery, dual-path filtering, and bounded-rate SOC fusion to reduce jumpy and misleading percentage output.
 
 ## Runtime Defaults
 
@@ -52,6 +53,29 @@ src/
 - Sensor publish interval to UI: **30 seconds** (`kSensorRefreshMs`).
 - Uptime label refresh: **1 second**.
 - Boot data/IAQ verification window: **up to 15 seconds**.
+
+## Battery Percentage Model
+
+Battery percentage is estimated in software from the board's existing battery ADC path (no added gauge IC).
+
+Estimator pipeline:
+
+- ADC sampling with calibration and multi-sample averaging.
+- Dual voltage filtering:
+  - Fast filter for responsive voltage tracking.
+  - Slow filter for rest-state baseline detection.
+- Dynamic OCV compensation:
+  - Compensates load sag based on display power state and UI load activity.
+  - Applies extra recovery in near-rest conditions.
+- Non-linear Li-ion OCV-to-SOC mapping (piecewise interpolation, not linear 3.2V-4.2V mapping).
+- Fusion + slew-rate limiting:
+  - Smooths SOC to avoid false jumps.
+  - Limits physically unrealistic rise/drop speed.
+
+Important note:
+
+- This is a high-quality voltage-model SOC estimator, not true coulomb-counting fuel gauging.
+- Runtime prediction in minutes still depends heavily on battery age, internal resistance, temperature, and load profile.
 
 ## Hardware & Wiring
 

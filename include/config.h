@@ -96,9 +96,23 @@ namespace cfg
         inline constexpr uint32_t kMinMv = 3200U;
         inline constexpr uint32_t kMaxMv = 4200U;
         inline constexpr uint32_t kAbsentMv = 4300U;
-        inline constexpr uint8_t kDownConfirmCycles = 2;
-        inline constexpr uint8_t kUpConfirmCycles = 4;
-        inline constexpr uint8_t kUpMinStep = 2;
+
+        inline constexpr uint32_t kEstimatorSampleMs = 1000U;
+        inline constexpr uint32_t kLabelRefreshMs = 10000U;
+
+        inline constexpr uint32_t kLoadCompAwakeMv = 85U;
+        inline constexpr uint32_t kLoadCompSleepMv = 25U;
+        inline constexpr uint32_t kRestRecoveryBonusMv = 20U;
+        inline constexpr uint32_t kRestDeltaMv = 7U;
+
+        inline constexpr float kSocBlendActive = 0.08f;
+        inline constexpr float kSocBlendSleep = 0.12f;
+        inline constexpr float kSocBlendRest = 0.35f;
+        inline constexpr float kSocBlendCharging = 0.22f;
+
+        inline constexpr float kMaxDropPctPerMin = 1.8f;
+        inline constexpr float kMaxRisePctPerMinIdle = 0.4f;
+        inline constexpr float kMaxRisePctPerMinCharging = 7.0f;
     }
 
     namespace sensor

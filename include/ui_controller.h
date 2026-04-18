@@ -100,6 +100,7 @@ private:
     void updateBatteryLabels();
     uint32_t readBatteryMv(bool *has_battery);
     uint8_t batteryPercentFromMv(uint32_t mv) const;
+    uint32_t estimateBatteryOcvMv(uint32_t measured_mv, bool display_awake) const;
     uint8_t estimateCpuLoadPercent(uint32_t now_ms);
     lv_color_t blendHexColors(uint32_t from_hex, uint32_t to_hex, uint8_t mix_255) const;
     lv_color_t batteryColorFromPercent(uint8_t percent, bool usb_power) const;
@@ -149,11 +150,16 @@ private:
     esp_adc_cal_characteristics_t battery_adc_chars_{};
     bool battery_adc_ready_ = false;
 
-    uint32_t bat_filtered_mv_ = 0;
-    bool bat_filtered_ready_ = false;
-    int16_t bat_display_pct_ = -1;
-    uint8_t bat_down_confirm_ = 0;
-    uint8_t bat_up_confirm_ = 0;
+    uint32_t bat_fast_mv_ = 0;
+    uint32_t bat_slow_mv_ = 0;
+    bool bat_filter_ready_ = false;
+    bool bat_usb_power_ = true;
+
+    float bat_soc_estimate_pct_ = 100.0f;
+    bool bat_soc_ready_ = false;
+    uint8_t bat_shown_pct_ = 100;
+    uint32_t bat_last_sample_ms_ = 0;
+    uint32_t bat_last_label_ms_ = 0;
 
     uint32_t last_ui_refresh_ms_ = 0;
     uint32_t last_uptime_refresh_ms_ = 0;

@@ -81,15 +81,99 @@ void UiController::formatUptime(char *out, size_t out_len, uint32_t uptime_secon
 
 uint8_t UiController::batteryPercentFromMv(uint32_t mv) const
 {
-    if (mv <= cfg::battery::kMinMv)
+    static const uint16_t kOcvMv[] = {
+        3200,
+        3300,
+        3400,
+        3500,
+        3600,
+        3700,
+        3750,
+        3800,
+        3850,
+        3900,
+        3950,
+        4000,
+        4050,
+        4100,
+        4150,
+        4200,
+    };
+    static const uint8_t kSocPct[] = {
+        0,
+        1,
+        3,
+        6,
+        11,
+        22,
+        30,
+        38,
+        47,
+        56,
+        65,
+        74,
+        82,
+        90,
+        96,
+        100,
+    };
+
+    if (mv <= kOcvMv[0])
     {
         return 0;
     }
-    if (mv >= cfg::battery::kMaxMv)
+
+    const size_t count = sizeof(kOcvMv) / sizeof(kOcvMv[0]);
+    if (mv >= kOcvMv[count - 1U])
     {
         return 100;
     }
-    return static_cast<uint8_t>(((mv - cfg::battery::kMinMv) * 100U) / (cfg::battery::kMaxMv - cfg::battery::kMinMv));
+
+    for (size_t i = 0; i + 1U < count; ++i)
+    {
+        const uint16_t low_mv = kOcvMv[i];
+        const uint16_t high_mv = kOcvMv[i + 1U];
+        if ((mv < low_mv) || (mv > high_mv))
+        {
+            continue;
+        }
+
+        const uint8_t low_soc = kSocPct[i];
+        const uint8_t high_soc = kSocPct[i + 1U];
+        const uint32_t span_mv = static_cast<uint32_t>(high_mv - low_mv);
+        const uint32_t progress_mv = static_cast<uint32_t>(mv - low_mv);
+        const uint32_t interpolated = static_cast<uint32_t>(low_soc) +
+                                      ((static_cast<uint32_t>(high_soc - low_soc) * progress_mv + (span_mv / 2U)) / span_mv);
+        return static_cast<uint8_t>(interpolated);
+    }
+
+    return 0;
+}
+
+uint32_t UiController::estimateBatteryOcvMv(uint32_t measured_mv, bool display_awake) const
+{
+    const uint32_t load_comp_base = display_awake ? cfg::battery::kLoadCompAwakeMv : cfg::battery::kLoadCompSleepMv;
+    const float cpu_factor = static_cast<float>(clampI32(static_cast<int32_t>(lroundf(cpu_load_estimate_pct_)), 0, 100)) / 100.0f;
+    const uint32_t load_comp = static_cast<uint32_t>(lroundf(static_cast<float>(load_comp_base) * (0.30f + (0.70f * cpu_factor))));
+
+    uint32_t ocv_mv = measured_mv + load_comp;
+
+    const uint32_t ripple_mv = (bat_fast_mv_ >= bat_slow_mv_) ? (bat_fast_mv_ - bat_slow_mv_) : (bat_slow_mv_ - bat_fast_mv_);
+    if ((!display_awake) && (ripple_mv <= cfg::battery::kRestDeltaMv))
+    {
+        ocv_mv += cfg::battery::kRestRecoveryBonusMv;
+    }
+
+    if (ocv_mv < cfg::battery::kMinMv)
+    {
+        ocv_mv = cfg::battery::kMinMv;
+    }
+    if (ocv_mv > cfg::battery::kMaxMv)
+    {
+        ocv_mv = cfg::battery::kMaxMv;
+    }
+
+    return ocv_mv;
 }
 
 uint8_t UiController::estimateCpuLoadPercent(uint32_t now_ms)
@@ -759,76 +843,118 @@ uint32_t UiController::readBatteryMv(bool *has_battery)
     const uint32_t raw_avg = raw_sum / cfg::battery::kAdcSamples;
     const uint32_t mv = esp_adc_cal_raw_to_voltage(raw_avg, &battery_adc_chars_) * 2U;
 
-    if (!bat_filtered_ready_)
+    if (!bat_filter_ready_)
     {
-        bat_filtered_mv_ = mv;
-        bat_filtered_ready_ = true;
+        bat_fast_mv_ = mv;
+        bat_slow_mv_ = mv;
+        bat_filter_ready_ = true;
     }
     else
     {
-        bat_filtered_mv_ = (bat_filtered_mv_ * 3U + mv) / 4U;
+        bat_fast_mv_ = (bat_fast_mv_ * 3U + mv) / 4U;
+        bat_slow_mv_ = (bat_slow_mv_ * 15U + mv) / 16U;
     }
 
-    const bool present = bat_filtered_mv_ <= cfg::battery::kAbsentMv;
+    const bool present = bat_fast_mv_ <= cfg::battery::kAbsentMv;
     if (has_battery != nullptr)
     {
         *has_battery = present;
     }
 
-    return bat_filtered_mv_;
+    return bat_fast_mv_;
 }
 
 void UiController::updateBatteryLabels()
 {
-    bool has_battery = false;
-    const uint32_t bat_mv = readBatteryMv(&has_battery);
-    const bool usb_power = !has_battery;
-    const uint8_t bat_pct = batteryPercentFromMv(bat_mv);
+    const uint32_t now_ms = millis();
+    const bool do_sample = (bat_last_sample_ms_ == 0U) || (now_ms - bat_last_sample_ms_ >= cfg::battery::kEstimatorSampleMs);
+    if (do_sample)
+    {
+        const uint32_t prev_sample_ms = bat_last_sample_ms_;
+        bat_last_sample_ms_ = now_ms;
 
-    uint8_t shown_pct = 100U;
-    if (usb_power)
-    {
-        bat_display_pct_ = -1;
-        bat_down_confirm_ = 0;
-        bat_up_confirm_ = 0;
-    }
-    else
-    {
-        if (bat_display_pct_ < 0)
+        bool has_battery = false;
+        const uint32_t measured_mv = readBatteryMv(&has_battery);
+        bat_usb_power_ = !has_battery;
+
+        if (bat_usb_power_)
         {
-            bat_display_pct_ = static_cast<int16_t>(bat_pct);
-        }
-        else if (bat_pct < static_cast<uint8_t>(bat_display_pct_))
-        {
-            ++bat_down_confirm_;
-            bat_up_confirm_ = 0;
-            if (bat_down_confirm_ >= cfg::battery::kDownConfirmCycles)
-            {
-                bat_display_pct_ = static_cast<int16_t>(bat_pct);
-                bat_down_confirm_ = 0;
-            }
-        }
-        else if (bat_pct > static_cast<uint8_t>(bat_display_pct_))
-        {
-            ++bat_up_confirm_;
-            bat_down_confirm_ = 0;
-            if ((bat_pct >= static_cast<uint8_t>(bat_display_pct_ + cfg::battery::kUpMinStep)) &&
-                (bat_up_confirm_ >= cfg::battery::kUpConfirmCycles))
-            {
-                bat_display_pct_ = static_cast<int16_t>(bat_pct);
-                bat_up_confirm_ = 0;
-            }
+            bat_soc_estimate_pct_ = 100.0f;
+            bat_soc_ready_ = true;
         }
         else
         {
-            bat_down_confirm_ = 0;
-            bat_up_confirm_ = 0;
-        }
+            const bool display_awake = PowerManager::instance().isDisplayAwake();
+            const uint32_t ocv_mv = estimateBatteryOcvMv(measured_mv, display_awake);
+            const float measured_soc = static_cast<float>(batteryPercentFromMv(ocv_mv));
 
-        shown_pct = static_cast<uint8_t>(clampI32(bat_display_pct_, 0, 100));
+            float blend = display_awake ? cfg::battery::kSocBlendActive : cfg::battery::kSocBlendSleep;
+            const uint32_t ripple_mv = (bat_fast_mv_ >= bat_slow_mv_) ? (bat_fast_mv_ - bat_slow_mv_) : (bat_slow_mv_ - bat_fast_mv_);
+            if ((!display_awake) && (ripple_mv <= cfg::battery::kRestDeltaMv))
+            {
+                blend = cfg::battery::kSocBlendRest;
+            }
+
+            if (!bat_soc_ready_)
+            {
+                bat_soc_estimate_pct_ = measured_soc;
+                bat_soc_ready_ = true;
+            }
+            else
+            {
+                const float fused_soc = bat_soc_estimate_pct_ + ((measured_soc - bat_soc_estimate_pct_) * blend);
+
+                uint32_t elapsed_ms = cfg::battery::kEstimatorSampleMs;
+                if (prev_sample_ms > 0U)
+                {
+                    elapsed_ms = (now_ms > prev_sample_ms) ? (now_ms - prev_sample_ms) : cfg::battery::kEstimatorSampleMs;
+                }
+                const float elapsed_minutes = static_cast<float>(elapsed_ms) / 60000.0f;
+                const float max_drop = cfg::battery::kMaxDropPctPerMin * elapsed_minutes;
+                const float max_rise = cfg::battery::kMaxRisePctPerMinIdle * elapsed_minutes;
+
+                if (fused_soc < (bat_soc_estimate_pct_ - max_drop))
+                {
+                    bat_soc_estimate_pct_ -= max_drop;
+                }
+                else if (fused_soc > (bat_soc_estimate_pct_ + max_rise))
+                {
+                    bat_soc_estimate_pct_ += max_rise;
+                }
+                else
+                {
+                    bat_soc_estimate_pct_ = fused_soc;
+                }
+            }
+
+            if (bat_soc_estimate_pct_ < 0.0f)
+            {
+                bat_soc_estimate_pct_ = 0.0f;
+            }
+            if (bat_soc_estimate_pct_ > 100.0f)
+            {
+                bat_soc_estimate_pct_ = 100.0f;
+            }
+        }
     }
 
-    const lv_color_t text_color = batteryColorFromPercent(shown_pct, usb_power);
+    uint8_t shown_pct = 100U;
+    if (!bat_usb_power_)
+    {
+        const int32_t rounded_soc = clampI32(static_cast<int32_t>(lroundf(bat_soc_estimate_pct_)), 0, 100);
+        shown_pct = static_cast<uint8_t>(rounded_soc);
+    }
+
+    const bool force_refresh = (bat_last_label_ms_ == 0U) || (now_ms - bat_last_label_ms_ >= cfg::battery::kLabelRefreshMs);
+    if (!force_refresh && (shown_pct == bat_shown_pct_))
+    {
+        return;
+    }
+
+    bat_shown_pct_ = shown_pct;
+    bat_last_label_ms_ = now_ms;
+
+    const lv_color_t text_color = batteryColorFromPercent(shown_pct, bat_usb_power_);
     for (uint8_t i = 0; i < 3U; ++i)
     {
         if (battery_labels_[i] == nullptr)
@@ -1008,8 +1134,6 @@ void UiController::updateValues()
                               static_cast<unsigned long>(free_tenths % 10U),
                               static_cast<unsigned long>(total_tenths / 10U),
                               static_cast<unsigned long>(total_tenths % 10U));
-
-        updateBatteryLabels();
     }
 }
 
@@ -1059,6 +1183,8 @@ void UiController::taskLoop()
                 updateValues();
             }
         }
+
+        updateBatteryLabels();
 
         const uint64_t busy_us = esp_timer_get_time() - cycle_start_us;
         const uint64_t scheduled_us = static_cast<uint64_t>(task_delay_ms) * 1000ULL;
