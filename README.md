@@ -40,7 +40,7 @@ src/
 
 - **Real-time Environment Data**: Temperature, Humidity, Air Pressure, and calculated Altitude.
 - **AQI Monitoring**: Real-time Gas Resistance and Indoor Air Quality (IAQ) from Bosch BSEC2.
-- **System Telemetry**: CPU Load estimate (%), Uptime counter, and Battery Percentage.
+- **System Telemetry**: CPU Load estimate (% from UI task activity), Uptime counter, and Battery Percentage.
 - **Power Optimization**: Background sensor processing with reduced screen redraws.
 - **Serial Diagnostics**: Built-in CLI for status checks and manual calibration.
 - **Automatic Recovery**: Detects and clears stuck IAQ states automatically.
@@ -51,6 +51,7 @@ src/
 - Display timeout: **15 seconds** of inactivity.
 - Sensor publish interval to UI: **30 seconds** (`kSensorRefreshMs`).
 - Uptime label refresh: **1 second**.
+- Boot data/IAQ verification window: **up to 15 seconds**.
 
 ## Hardware & Wiring
 
@@ -183,8 +184,13 @@ Available commands:
 - `debug detail on`: Turn on periodic verbose debugging
 - `debug detail off`: Turn off verbose debugging
 
+Notes:
+
+- Serial commands are executed when you press Enter (no idle auto-submit).
+
 ## Troubleshooting
 
 - **Sensor not detected**: Check the SDA/SCL wiring and the 0x76/0x77 address configuration.
 - **Accuracy is stuck at "Very Low"**: Leave it running continuously; monitor the `status` via Serial.
 - **Screen numbers flicker/disappear**: The firmware pauses data publishing when I2C is unstable to prevent flickering. Provide better power or check connections.
+- **Boot self-check shows temporary data/IAQ fail**: Keep the device powered for initial warm-up; the firmware now waits up to 15 seconds for fresh pipeline data during boot validation.

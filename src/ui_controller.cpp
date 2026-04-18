@@ -1,7 +1,6 @@
 #include "ui_controller.h"
 
 #include <Wire.h>
-#include <esp32-hal-cpu.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <math.h>
@@ -95,38 +94,9 @@ uint8_t UiController::batteryPercentFromMv(uint32_t mv) const
 
 uint8_t UiController::estimateCpuLoadPercent(uint32_t now_ms)
 {
-    static uint32_t prev_heap_free = 0;
-    static uint8_t smoothed = 0;
-
-    const uint32_t heap_free = ESP.getFreeHeap();
-    const uint32_t heap_total = ESP.getHeapSize();
-
-    uint32_t heap_used_pct = 0;
-    if (heap_total > 0U)
-    {
-        heap_used_pct = (100UL * (heap_total - heap_free)) / heap_total;
-    }
-
-    uint32_t heap_delta = 0;
-    if (prev_heap_free != 0U)
-    {
-        heap_delta = (heap_free > prev_heap_free) ? (heap_free - prev_heap_free) : (prev_heap_free - heap_free);
-    }
-    prev_heap_free = heap_free;
-
-    const uint32_t churn_term = (heap_delta > 2048U) ? 20U : (heap_delta / 100U);
-    const uint32_t wave_term = (now_ms / 1000UL) % 7UL;
-
-    const int32_t instant = clampI32(static_cast<int32_t>(8U + (heap_used_pct / 2U) + churn_term + wave_term), 5, 95);
-    if (smoothed == 0U)
-    {
-        smoothed = static_cast<uint8_t>(instant);
-    }
-    else
-    {
-        smoothed = static_cast<uint8_t>((3U * smoothed + static_cast<uint8_t>(instant)) / 4U);
-    }
-    return smoothed;
+    (void)now_ms;
+    const int32_t rounded = clampI32(static_cast<int32_t>(lroundf(cpu_load_estimate_pct_)), 0, 100);
+    return static_cast<uint8_t>(rounded);
 }
 
 lv_color_t UiController::blendHexColors(uint32_t from_hex, uint32_t to_hex, uint8_t mix_255) const
@@ -1065,6 +1035,7 @@ void UiController::taskLoop()
 
         const bool display_awake = PowerManager::instance().isDisplayAwake();
         const uint32_t task_delay_ms = display_awake ? cfg::timing::kUiTaskActiveDelayMs : cfg::timing::kUiTaskSleepDelayMs;
+        const uint64_t cycle_start_us = esp_timer_get_time();
 
         if (display_awake != prev_display_awake_)
         {
@@ -1087,6 +1058,19 @@ void UiController::taskLoop()
                 last_bg_ui_refresh_ms_ = now_ms;
                 updateValues();
             }
+        }
+
+        const uint64_t busy_us = esp_timer_get_time() - cycle_start_us;
+        const uint64_t scheduled_us = static_cast<uint64_t>(task_delay_ms) * 1000ULL;
+        const uint64_t cycle_total_us = busy_us + scheduled_us;
+        if (cycle_total_us > 0ULL)
+        {
+            float instant = (static_cast<float>(busy_us) * 100.0f) / static_cast<float>(cycle_total_us);
+            if (display_awake && (instant < 1.0f))
+            {
+                instant = 1.0f;
+            }
+            cpu_load_estimate_pct_ = (cpu_load_estimate_pct_ * 0.80f) + (instant * 0.20f);
         }
 
         vTaskDelay(pdMS_TO_TICKS(task_delay_ms));

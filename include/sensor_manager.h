@@ -98,7 +98,6 @@ private:
     bool persistBsecState();
     void clearBsecStateBlob();
 
-    void seedDefaultSnapshot();
     void publishSnapshot(uint32_t now_ms);
     void refreshAltitudeFromSnapshot();
 
@@ -187,5 +186,4 @@ private:
     SensorManager &sensor_manager_;
     char line_buffer_[96] = {0};
     size_t line_len_ = 0;
-    uint32_t last_rx_ms_ = 0;
 };

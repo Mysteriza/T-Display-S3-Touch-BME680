@@ -18,15 +18,18 @@ namespace
   {
     BootDataCheckResult result;
     const uint32_t start_ms = millis();
+    constexpr uint32_t kFreshDataMaxAgeMs = 4000U;
 
     while (millis() - start_ms < cfg::timing::kBootDataCheckMs)
     {
+      const uint32_t now_ms = millis();
       const SensorData snapshot = sensor_manager.getData();
+      const bool data_fresh = (snapshot.last_update_ms != 0U) && ((now_ms - snapshot.last_update_ms) <= kFreshDataMaxAgeMs);
       const bool core_valid = snapshot.valid &&
+                              data_fresh &&
                               isfinite(snapshot.temperature_c) &&
                               isfinite(snapshot.humidity_pct) &&
-                              isfinite(snapshot.pressure_hpa) &&
-                              (snapshot.last_update_ms != 0U);
+                              isfinite(snapshot.pressure_hpa);
 
       float iaq_value = snapshot.iaq;
       if (!isfinite(iaq_value) && isfinite(snapshot.iaq_static))
@@ -45,7 +48,7 @@ namespace
         break;
       }
 
-      delay(60);
+      delay(80);
     }
 
     return result;
@@ -77,6 +80,9 @@ void setup()
   boot_status.sensor_ok = sensor_manager.init();
   ui.bootDiagUpdate(boot_status);
 
+  TaskHandle_t sensor_task_handle = nullptr;
+  xTaskCreatePinnedToCore(SensorManager::taskEntry, "sensorTask", 8192, &sensor_manager, 2, &sensor_task_handle, 0);
+
   if (boot_status.sensor_ok)
   {
     const BootDataCheckResult check = verifyDataAndIaq(sensor_manager);
@@ -99,7 +105,6 @@ void setup()
 
   ui.buildPages();
 
-  xTaskCreatePinnedToCore(SensorManager::taskEntry, "sensorTask", 8192, &sensor_manager, 2, nullptr, 0);
   xTaskCreatePinnedToCore(UiController::taskEntry, "uiTask", 12288, &ui, 2, nullptr, 1);
 }
 

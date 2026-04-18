@@ -54,7 +54,7 @@ namespace cfg
         inline constexpr uint32_t kSensorTaskDelayMs = 200UL;
         inline constexpr uint32_t kSensorInitRetryMs = 1000UL;
         inline constexpr uint32_t kSensorLinkProbeMs = 5000UL;
-        inline constexpr uint32_t kBootDataCheckMs = 5000UL;
+        inline constexpr uint32_t kBootDataCheckMs = 15000UL;
 
         inline constexpr uint32_t kBsecStateSaveMs = 4UL * 60UL * 60UL * 1000UL; // 4 Hours
         inline constexpr uint32_t kBsecStateSaveMinGapMs = 10UL * 60UL * 1000UL; // 10 Minutes
