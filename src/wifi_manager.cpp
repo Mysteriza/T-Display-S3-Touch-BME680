@@ -84,39 +84,49 @@ bool WiFiManager::connectWithTimeout(uint32_t timeout_ms)
 
 bool WiFiManager::parseNumberAfterKey(const String &src, const char *key, float &out_value) const
 {
-    const int key_pos = src.indexOf(key);
-    if (key_pos < 0)
+    int search_from = 0;
+    while (search_from < src.length())
     {
-        return false;
-    }
+        const int key_pos = src.indexOf(key, search_from);
+        if (key_pos < 0)
+        {
+            return false;
+        }
 
-    int colon = src.indexOf(':', key_pos);
-    if (colon < 0)
-    {
-        return false;
-    }
+        int colon = src.indexOf(':', key_pos);
+        if (colon < 0)
+        {
+            return false;
+        }
 
-    ++colon;
-    while ((colon < src.length()) &&
-           ((src[colon] == ' ') || (src[colon] == '\t') || (src[colon] == '\r') || (src[colon] == '\n') ||
-            (src[colon] == '"') || (src[colon] == '[')))
-    {
         ++colon;
+        while ((colon < src.length()) &&
+               ((src[colon] == ' ') || (src[colon] == '\t') || (src[colon] == '\r') || (src[colon] == '\n') ||
+                (src[colon] == '"') || (src[colon] == '[')))
+        {
+            ++colon;
+        }
+
+        int end = colon;
+        while ((end < src.length()) && ((src[end] == '-') || (src[end] == '+') || (src[end] == '.') || (src[end] >= '0' && src[end] <= '9')))
+        {
+            ++end;
+        }
+
+        if (end > colon)
+        {
+            out_value = src.substring(colon, end).toFloat();
+            if (isfinite(out_value))
+            {
+                return true;
+            }
+        }
+
+        // Continue search to handle duplicate keys where earlier occurrence is non-numeric.
+        search_from = key_pos + 1;
     }
 
-    int end = colon;
-    while ((end < src.length()) && ((src[end] == '-') || (src[end] == '+') || (src[end] == '.') || (src[end] >= '0' && src[end] <= '9')))
-    {
-        ++end;
-    }
-
-    if (end <= colon)
-    {
-        return false;
-    }
-
-    out_value = src.substring(colon, end).toFloat();
-    return isfinite(out_value);
+    return false;
 }
 
 bool WiFiManager::parseWeatherPayload(const String &payload, WeatherSnapshot &snapshot) const
