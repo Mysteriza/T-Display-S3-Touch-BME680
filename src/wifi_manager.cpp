@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <math.h>
+#include <time.h>
 
 #include "config.h"
 
@@ -11,6 +12,19 @@ WiFiManager &WiFiManager::instance()
 {
     static WiFiManager manager;
     return manager;
+}
+
+void WiFiManager::ensureTimeSync()
+{
+    const uint32_t now_ms = millis();
+    if (ntp_started_ && (last_ntp_sync_try_ms_ != 0U) && (now_ms - last_ntp_sync_try_ms_ < 10000UL))
+    {
+        return;
+    }
+
+    configTime(0, 0, "pool.ntp.org", "time.google.com", "time.nist.gov");
+    ntp_started_ = true;
+    last_ntp_sync_try_ms_ = now_ms;
 }
 
 void WiFiManager::setFetchError(FetchError error, int http_code)
@@ -62,6 +76,7 @@ bool WiFiManager::connectWithTimeout(uint32_t timeout_ms)
 
     if ((WiFi.status() == WL_CONNECTED) && (WiFi.SSID() == String(cfg::wifi::kSsid)))
     {
+        ensureTimeSync();
         return true;
     }
 
@@ -74,11 +89,16 @@ bool WiFiManager::connectWithTimeout(uint32_t timeout_ms)
     {
         if (WiFi.status() == WL_CONNECTED)
         {
+            ensureTimeSync();
             return true;
         }
         delay(120);
     }
 
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        ensureTimeSync();
+    }
     return WiFi.status() == WL_CONNECTED;
 }
 
@@ -215,6 +235,19 @@ bool WiFiManager::fetchOpenMeteo()
     }
 
     snapshot_ = snapshot;
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        ensureTimeSync();
+    }
+    const time_t now_epoch = time(nullptr);
+    if (now_epoch > 1700000000)
+    {
+        snapshot_.last_update_epoch_utc = static_cast<uint32_t>(now_epoch);
+    }
+    else
+    {
+        snapshot_.last_update_epoch_utc = 0;
+    }
     last_fetch_ms_ = snapshot.last_update_ms;
     last_fetch_error_ = FetchError::None;
     last_http_status_code_ = HTTP_CODE_OK;

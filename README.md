@@ -42,7 +42,7 @@ src/
 - **Real-time Environment Data**: Temperature, Humidity, Air Pressure, and calculated Altitude.
 - **Gas Monitoring (Page 02)**: Gas Resolution gauge, large Gas Status label, and 5-minute Gas Trend (Rising/Stable/Falling) computed against a rolling 30-second gas history baseline.
 - **System Telemetry**: UI task load estimate, Uptime counter, and Battery Percentage.
-- **Connectivity Detail (Page 03)**: WiFi status indicator (green connected / red offline), Last Fetch timestamp (`HH:MM:SS`), CPU Load (%), and Storage.
+- **Connectivity Detail (Page 03)**: WiFi status indicator (green connected / red offline), Last Fetch timestamp (`HH:MM:SS`, 24-hour WIB from internet time), CPU Load (%), and Storage.
 - **Online Weather Context**: Open-Meteo fetches **MSL pressure (`pressure_msl`)** every 10 minutes in online mode.
 - **Power Optimization**: Background sensor processing with reduced screen redraws.
 - **Serial Diagnostics**: Built-in CLI for status checks and manual calibration.
@@ -233,7 +233,7 @@ Weather runtime policy:
 - If runtime link drops while previously online, firmware retries every 30 seconds up to 3 attempts.
 - After 3 failed retries, firmware locks into offline mode (no aggressive reconnect loop).
 - Open-Meteo scheduler is disabled while offline and resumes automatically when online.
-- Altitude uses local sensor pressure with a bounded blend from Open-Meteo pressure reference for more stable readout.
+- Altitude uses local sensor pressure and calibrated sea-level pressure (`set slp` / `set alt`) without Open-Meteo blending so local calibration stays accurate.
 
 Boot production checklist:
 

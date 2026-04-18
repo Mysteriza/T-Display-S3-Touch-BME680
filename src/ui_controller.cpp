@@ -1284,7 +1284,7 @@ void UiController::updateValues()
         {
             last_fetch_label_refresh_ms_ = now_ms;
             const WeatherSnapshot weather = wifi.getSnapshot();
-            if (!weather.valid || (weather.last_update_ms == 0U) || !wifi.hasFreshWeather(now_ms))
+            if (!weather.valid || (weather.last_update_ms == 0U) || (weather.last_update_epoch_utc == 0U) || !wifi.hasFreshWeather(now_ms))
             {
                 lv_label_set_text(page_sys_.weather_update, "--:--:--");
                 lv_obj_set_style_text_color(page_sys_.weather_update, lv_color_hex(cfg::color::kTextDim), 0);
@@ -1292,7 +1292,8 @@ void UiController::updateValues()
             else
             {
                 const uint32_t day_seconds = 24UL * 60UL * 60UL;
-                const uint32_t fetch_seconds = (weather.last_update_ms / 1000UL) % day_seconds;
+                const uint32_t wib_offset_seconds = 7UL * 60UL * 60UL;
+                const uint32_t fetch_seconds = (weather.last_update_epoch_utc + wib_offset_seconds) % day_seconds;
                 const uint32_t hh = fetch_seconds / 3600UL;
                 const uint32_t mm = (fetch_seconds % 3600UL) / 60UL;
                 const uint32_t ss = fetch_seconds % 60UL;

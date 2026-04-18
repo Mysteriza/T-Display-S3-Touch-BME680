@@ -9,6 +9,7 @@ struct WeatherSnapshot
     bool valid = false;
     float surface_pressure_hpa = NAN;
     uint32_t last_update_ms = 0;
+    uint32_t last_update_epoch_utc = 0;
 };
 
 class WiFiManager
@@ -60,6 +61,7 @@ private:
     bool fetchOpenMeteo();
     bool parseWeatherPayload(const String &payload, WeatherSnapshot &snapshot) const;
     bool parseNumberAfterKey(const String &src, const char *key, float &out_value) const;
+    void ensureTimeSync();
     void setRuntimeState(State state, bool connected, bool online_mode, uint8_t reconnect_attempts);
     void setFetchError(FetchError error, int http_code = 0);
 
@@ -74,6 +76,8 @@ private:
     uint32_t state_since_ms_ = 0;
     uint32_t last_fetch_ms_ = 0;
     uint32_t last_reconnect_try_ms_ = 0;
+    uint32_t last_ntp_sync_try_ms_ = 0;
+    bool ntp_started_ = false;
     FetchError last_fetch_error_ = FetchError::None;
     int last_http_status_code_ = 0;
 

@@ -542,19 +542,7 @@ void SensorManager::publishSnapshot(uint32_t now_ms)
                           isfinite(sensor_data_.pressure_hpa) && (sensor_data_.pressure_hpa > 0.0f) &&
                           isfinite(sensor_data_.gas_resistance_kohm) && (sensor_data_.gas_resistance_kohm > 0.0f);
 
-    float effective_pressure_hpa = sensor_data_.pressure_hpa;
-    const WeatherSnapshot weather = WiFiManager::instance().getSnapshot();
-    if (weather.valid && isfinite(weather.surface_pressure_hpa) &&
-        (weather.surface_pressure_hpa >= cfg::sensor::kSeaLevelMinHpa) &&
-        (weather.surface_pressure_hpa <= cfg::sensor::kSeaLevelMaxHpa))
-    {
-        // Blend local pressure and remote surface-pressure reference to reduce short-term noise.
-        constexpr float kWeatherPressureBlend = 0.18f;
-        effective_pressure_hpa = (sensor_data_.pressure_hpa * (1.0f - kWeatherPressureBlend)) +
-                                 (weather.surface_pressure_hpa * kWeatherPressureBlend);
-    }
-
-    sensor_data_.altitude_m = calcAltitude(effective_pressure_hpa);
+    sensor_data_.altitude_m = calcAltitude(sensor_data_.pressure_hpa);
     sensor_data_.valid = has_core;
     if (has_core)
     {
