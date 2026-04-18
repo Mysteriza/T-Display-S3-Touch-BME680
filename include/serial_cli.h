@@ -19,4 +19,5 @@ private:
     SensorManager &sensor_manager_;
     char line_buffer_[96] = {0};
     size_t line_len_ = 0;
+    uint32_t last_input_ms_ = 0;
 };

@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "config.h"
+#include "wifi_manager.h"
 
 SerialCLI::SerialCLI(SensorManager &sensor_manager) : sensor_manager_(sensor_manager)
 {
@@ -155,28 +156,6 @@ void SerialCLI::handleCommand(char *line)
         return;
     }
 
-    if ((argc >= 3U) && (strcmp(argv[0], "iaq") == 0) && (strcmp(argv[1], "model") == 0))
-    {
-        if (strcmp(argv[2], "status") == 0)
-        {
-            sensor_manager_.printIaqModelStatus(Serial);
-            return;
-        }
-
-        if (strcmp(argv[2], "digest") == 0)
-        {
-            sensor_manager_.printIaqModelDigest(Serial);
-            return;
-        }
-
-        if (strcmp(argv[2], "reset") == 0)
-        {
-            sensor_manager_.resetIaqAdaptiveModel(true);
-            Serial.println("[CMD] IAQ model reset complete.");
-            return;
-        }
-    }
-
     if ((argc >= 3U) && (strcmp(argv[0], "debug") == 0) && (strcmp(argv[1], "detail") == 0))
     {
         if (strcmp(argv[2], "on") == 0)
@@ -194,12 +173,38 @@ void SerialCLI::handleCommand(char *line)
         }
     }
 
+    if ((argc >= 2U) && (strcmp(argv[0], "wifi") == 0) && (strcmp(argv[1], "status") == 0))
+    {
+        WiFiManager::instance().printStatus(Serial);
+        return;
+    }
+
+    if ((argc >= 2U) && (strcmp(argv[0], "weather") == 0) && (strcmp(argv[1], "status") == 0))
+    {
+        WiFiManager::instance().printStatus(Serial);
+        return;
+    }
+
+    if ((argc >= 3U) && (strcmp(argv[0], "weather") == 0) && (strcmp(argv[1], "fetch") == 0) && (strcmp(argv[2], "now") == 0))
+    {
+        if (WiFiManager::instance().forceFetchNow())
+        {
+            Serial.println("[CMD] weather fetch succeeded.");
+        }
+        else
+        {
+            Serial.println("[CMD] weather fetch failed (offline or internet unavailable).");
+        }
+        return;
+    }
+
     Serial.printf("[CMD] unknown command: %s\n", original);
     Serial.println("[CMD] type 'help' for available commands.");
 }
 
 void SerialCLI::tick()
 {
+    bool saw_input = false;
     while (Serial.available() > 0)
     {
         const int raw = Serial.read();
@@ -207,6 +212,7 @@ void SerialCLI::tick()
         {
             break;
         }
+        saw_input = true;
 
         const char ch = static_cast<char>(raw);
         if ((ch == '\r') || (ch == '\n'))
@@ -229,12 +235,26 @@ void SerialCLI::tick()
         if (line_len_ < (sizeof(line_buffer_) - 1U))
         {
             line_buffer_[line_len_++] = ch;
+            last_input_ms_ = millis();
         }
         else
         {
             line_len_ = 0;
             line_buffer_[0] = '\0';
             Serial.println("[CMD] input too long, line dropped.");
+        }
+    }
+
+    if (!saw_input && (line_len_ > 0U) && (last_input_ms_ != 0U))
+    {
+        const uint32_t now_ms = millis();
+        if (now_ms - last_input_ms_ >= 250U)
+        {
+            line_buffer_[line_len_] = '\0';
+            handleCommand(line_buffer_);
+            line_len_ = 0;
+            line_buffer_[0] = '\0';
+            last_input_ms_ = 0;
         }
     }
 }

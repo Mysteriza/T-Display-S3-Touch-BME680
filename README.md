@@ -1,6 +1,6 @@
 # T-Display-S3 Touch BME680 Monitor
 
-Offline environmental monitor firmware for LilyGO T-Display-S3 + BME680/BME688 with Bosch BSEC2.
+Environmental monitor firmware for LilyGO T-Display-S3 + BME680/BME688 with Bosch BSEC2 and optional WiFi weather context.
 
 This README explains how the system works and the meaning of every number on the screen based on the current code implementation, so users do not need to read the source code.
 
@@ -27,25 +27,27 @@ Important principles:
 include/
   config.h          # Tuning parameters (pins, timings, colors)
   power_mgmt.h      # Screen timeout, wake logic
-  sensor_manager.h  # BSEC2 pipeline, sensor reading
+  sensor_manager.h  # BSEC2 non-IAQ pipeline, sensor reading
   ui_controller.h   # LVGL UI and rendering
+  wifi_manager.h    # WiFi state machine and weather snapshot
 src/
   main.cpp          # App entry point
   power_mgmt.cpp    # Power management logic
   sensor_manager.cpp# Sensor processing
   ui_controller.cpp # UI lifecycle
+  wifi_manager.cpp  # WiFi + Open-Meteo runtime
 ```
 
 ## Features
 
 - **Real-time Environment Data**: Temperature, Humidity, Air Pressure, and calculated Altitude.
-- **AQI Monitoring**: Real-time Gas Resistance and Indoor Air Quality (IAQ) from Bosch BSEC2.
-- **Adaptive IAQ Statusing (Page 02)**: Hybrid IAQ banding that keeps BSEC output as baseline and applies bounded gas-history correction with confidence + fallback safeguards.
+- **Gas Monitoring (Page 02)**: Gas Resolution gauge, large Gas Status label, and 5-minute Gas Trend (Rising/Stable/Falling).
 - **System Telemetry**: UI task load estimate, Uptime counter, and Battery Percentage.
+- **Connectivity Detail (Page 03)**: WiFi status indicator (green connected / red offline), Last Fetch timestamp (`HH:MM:SS`), CPU Load (%), and Storage.
+- **Online Weather Context**: Open-Meteo fetches **surface pressure only** every 10 minutes in online mode.
 - **Power Optimization**: Background sensor processing with reduced screen redraws.
 - **Serial Diagnostics**: Built-in CLI for status checks and manual calibration.
-- **Automatic Recovery**: Detects and clears stuck IAQ states automatically.
-- **Extended Boot Self-Check**: Verifies display, touch, sensor init, data pipeline validity, and IAQ pipeline readiness before entering normal runtime.
+- **Extended Boot Self-Check**: Verifies display, touch, sensor init, fresh data, and WiFi boot state before entering runtime.
 - **Advanced Battery SOC Estimator (No Extra Hardware)**: Non-linear Li-ion OCV curve, load-compensated voltage recovery, dual-path filtering, and bounded-rate SOC fusion to reduce jumpy and misleading percentage output.
 
 ## Runtime Defaults
@@ -54,7 +56,9 @@ src/
 - Sensor publish interval to UI: **30 seconds** (`kSensorRefreshMs`).
 - UI value refresh cadence: **1 second** (`kUiValuesRefreshMs`).
 - Uptime label refresh: **1 second**.
-- Boot data/IAQ verification window: **up to 15 seconds**.
+- Boot data verification window: **up to 15 seconds**.
+- Open-Meteo refresh interval: **10 minutes**, active only in online mode.
+- Reconnect policy after runtime disconnect: **every 30 seconds up to 3 attempts**, then offline mode.
 
 Temperature compensation policy:
 
@@ -188,9 +192,10 @@ python3 -m esptool --chip esp32s3 --port /dev/ttyUSB0 --baud 460800 write_flash 
 
 Once flashed, the monitor will immediately boot up and begin calibrating the sensor. The touch screen can be used to navigate between logical pages:
 
-- **Swipe Left/Right** on the touch screen to move between Environment, AQI, and System Telemetry pages.
+- **Swipe Left/Right** on the touch screen to move between Environment, Gas, and System pages.
 - The UI will automatically hide after inactivity to preserve battery but will continue sampling in the background. Tap the screen or press the wake button to turn on the screen.
-- AQI page intentionally focuses on Gas, IAQ value, Status, and Accuracy only (no duplicate Temp/Humidity rows).
+- Page 02 focuses on gas-only diagnostics: Gauge, Status, and 5-minute Trend.
+- Page 03 includes WiFi mode, Last Fetch time (`HH:MM:SS`), CPU Load (%), and Storage.
 
 ### Serial interface (CLI)
 
@@ -214,22 +219,23 @@ Available commands:
 - `i2c scan`: Scan the I2C bus for devices
 - `debug detail on`: Turn on periodic verbose debugging
 - `debug detail off`: Turn off verbose debugging
-- `iaq model status`: Show IAQ adaptive model diagnostics (confidence, state, reference gas, delta)
-- `iaq model digest`: Show concise IAQ adaptive runtime digest (state, confidence, readiness, history, effective IAQ)
-- `iaq model reset`: Reset IAQ adaptive model and clear local learning history
+- `wifi status`: Show WiFi state + weather context status
+- `weather status`: Show latest Open-Meteo **surface pressure** snapshot and age
+- `weather fetch now`: Trigger immediate Open-Meteo fetch
 
-Adaptive IAQ production safeguards:
+Weather runtime policy:
 
-- Adaptive correction only becomes active when run-in and stabilization are ready and confidence history is sufficient.
-- Anti-regression guard continuously compares adaptive output against a gas-derived proxy target.
-- Automatic rollback resets adaptive correction to baseline if adaptive path degrades repeatedly.
-- Periodic digest output is rate-limited (hourly in detailed debug mode) to avoid serial spam and extra power draw.
-- During early warmup (run-in/stabilization not ready, low accuracy), Page 02 shows `Warming up...` and `Calibrating` instead of a misleading fixed-good status.
+- WiFi scanning and connect attempt runs on every boot.
+- If WiFi/internet is unavailable, firmware enters offline mode and keeps local sensor operation fully active.
+- If runtime link drops while previously online, firmware retries every 30 seconds up to 3 attempts.
+- After 3 failed retries, firmware locks into offline mode (no aggressive reconnect loop).
+- Open-Meteo scheduler is disabled while offline and resumes automatically when online.
+- Altitude uses local sensor pressure with a bounded blend from Open-Meteo surface pressure reference for more stable readout.
 
 Boot production checklist:
 
 - Firmware prints a boot-time readiness checklist to serial for quick deployment validation.
-- Checklist covers LCD, touch, sensor init, fresh data availability, IAQ core validity, and IAQ model sanity.
+- Checklist covers LCD, touch, sensor init, fresh sensor data availability, and WiFi boot state.
 - Final verdict is reported as `READY` or `DEGRADED`.
 
 Notes:
@@ -239,6 +245,6 @@ Notes:
 ## Troubleshooting
 
 - **Sensor not detected**: Check the SDA/SCL wiring and the 0x76/0x77 address configuration.
-- **Accuracy is stuck at "Very Low"**: Leave it running continuously; monitor the `status` via Serial.
 - **Screen numbers flicker/disappear**: The firmware pauses data publishing when I2C is unstable to prevent flickering. Provide better power or check connections.
-- **Boot self-check shows temporary data/IAQ fail**: Keep the device powered for initial warm-up; the firmware now waits up to 15 seconds for fresh pipeline data during boot validation.
+- **WiFi remains offline**: Verify SSID/password in `include/config.h`, signal strength, and internet access.
+- **Boot self-check shows temporary data fail**: Keep device powered for initial warm-up; firmware waits up to 15 seconds for fresh pipeline data.

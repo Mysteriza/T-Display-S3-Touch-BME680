@@ -18,10 +18,8 @@ struct BootDiagStatus
     bool sensor_ok = false;
     bool data_done = false;
     bool data_ok = false;
-    bool iaq_done = false;
-    bool iaq_ok = false;
-    bool model_done = false;
-    bool model_ok = false;
+    bool wifi_done = false;
+    bool wifi_ok = false;
 };
 
 class UiController
@@ -59,15 +57,10 @@ private:
     {
         lv_obj_t *gas_title = nullptr;
         lv_obj_t *gas_value = nullptr;
-        lv_obj_t *gas_status_title = nullptr;
         lv_obj_t *gas_status_value = nullptr;
-        lv_obj_t *accuracy_title = nullptr;
-        lv_obj_t *accuracy_value = nullptr;
-        lv_obj_t *iaq_arc = nullptr;
-        lv_obj_t *iaq_title = nullptr;
-        lv_obj_t *iaq_number = nullptr;
-        lv_obj_t *status_title = nullptr;
-        lv_obj_t *status_value = nullptr;
+        lv_obj_t *gas_trend_title = nullptr;
+        lv_obj_t *gas_trend_value = nullptr;
+        lv_obj_t *gas_arc = nullptr;
     };
 
     struct PageSysData
@@ -75,12 +68,8 @@ private:
         lv_obj_t *uptime = nullptr;
         lv_obj_t *cpu_load = nullptr;
         lv_obj_t *storage = nullptr;
-    };
-
-    struct IaqDescriptor
-    {
-        const char *status;
-        uint32_t status_color;
+        lv_obj_t *wifi_status = nullptr;
+        lv_obj_t *weather_update = nullptr;
     };
 
     static void displayFlushCallback(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p);
@@ -113,8 +102,6 @@ private:
     lv_color_t blendHexColors(uint32_t from_hex, uint32_t to_hex, uint8_t mix_255) const;
     lv_color_t batteryColorFromPercent(uint8_t percent, bool usb_power) const;
 
-    IaqDescriptor describeIaqStatus(int32_t iaq_value) const;
-
     void formatUptime(char *out, size_t out_len, uint64_t uptime_seconds) const;
     int32_t clampI32(int32_t value, int32_t low, int32_t high) const;
     int32_t roundToInt(float value) const;
@@ -143,8 +130,7 @@ private:
     lv_obj_t *boot_touch_ = nullptr;
     lv_obj_t *boot_sensor_ = nullptr;
     lv_obj_t *boot_data_ = nullptr;
-    lv_obj_t *boot_iaq_ = nullptr;
-    lv_obj_t *boot_model_ = nullptr;
+    lv_obj_t *boot_wifi_ = nullptr;
 
     lv_obj_t *pages_[3] = {nullptr, nullptr, nullptr};
     lv_obj_t *env_headers_[3] = {nullptr, nullptr, nullptr};
@@ -171,6 +157,7 @@ private:
     uint32_t bat_last_label_ms_ = 0;
 
     uint32_t last_ui_refresh_ms_ = 0;
+    uint32_t last_env_snapshot_ms_ = 0;
     uint32_t last_uptime_refresh_ms_ = 0;
     uint32_t last_cpu_refresh_ms_ = 0;
     uint32_t last_sys_info_refresh_ms_ = 0;

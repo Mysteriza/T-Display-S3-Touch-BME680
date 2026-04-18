@@ -58,7 +58,6 @@ namespace cfg
 
         inline constexpr uint32_t kBsecStateSaveMs = 4UL * 60UL * 60UL * 1000UL; // 4 Hours
         inline constexpr uint32_t kBsecStateSaveMinGapMs = 10UL * 60UL * 1000UL; // 10 Minutes
-        inline constexpr uint32_t kIaqStuckTimeoutMs = 20UL * 60UL * 1000UL;
 
         inline constexpr uint32_t kCpuLoadRefreshMs = kSensorRefreshMs;
         inline constexpr uint32_t kSysInfoRefreshMs = kSensorRefreshMs;
@@ -119,16 +118,6 @@ namespace cfg
 
     namespace sensor
     {
-        inline constexpr uint8_t kIaqAccuracyVeryLow = 0;
-        inline constexpr uint8_t kIaqAccuracyLow = 1;
-        inline constexpr uint8_t kIaqAccuracyMedium = 2;
-        inline constexpr uint8_t kIaqAccuracyHigh = 3;
-
-        inline constexpr uint8_t kIaqModelBaseline = 0;
-        inline constexpr uint8_t kIaqModelLearning = 1;
-        inline constexpr uint8_t kIaqModelAdaptive = 2;
-        inline constexpr uint8_t kIaqModelFallback = 3;
-
         inline constexpr uint8_t kRunFailLimit = 2;
         inline constexpr uint8_t kLinkOkLimit = 2;
         inline constexpr uint8_t kLinkFailLimit = 2;
@@ -144,27 +133,26 @@ namespace cfg
         inline constexpr float kBsecTemperatureOffsetCompactC = 0.5f;
         inline constexpr float kKnownAltitudeMinM = -500.0f;
         inline constexpr float kKnownAltitudeMaxM = 9000.0f;
-        inline constexpr float kIaqStuckTarget = 50.0f;
-        inline constexpr float kIaqStuckTolerance = 2.0f;
 
-        inline constexpr uint8_t kIaqAdaptiveBucketMinutes = 5;
-        inline constexpr uint16_t kIaqAdaptiveWindowHours = 72;
-        inline constexpr uint16_t kIaqAdaptiveMinSamples = 72;
-        inline constexpr uint32_t kIaqAdaptiveSaveMs = 30UL * 60UL * 1000UL;
-        inline constexpr uint32_t kIaqAdaptiveSaveMinGapMs = 10UL * 60UL * 1000UL;
+        inline constexpr float kGasTrendStableDeltaKohm = 0.35f;
+        inline constexpr float kGasGaugeMinKohm = 0.0f;
+        inline constexpr float kGasGaugeMaxKohm = 200.0f;
+    }
 
-        inline constexpr float kIaqAdaptiveAlpha = 0.15f;
-        inline constexpr float kIaqAdaptiveMaxDelta = 25.0f;
-        inline constexpr float kIaqAdaptiveMaxStep = 2.0f;
-        inline constexpr float kIaqAdaptivePoorGuardBand = 5.0f;
-        inline constexpr uint8_t kIaqAdaptiveMinAccuracy = 2;
-        inline constexpr float kBsecRunInReadyValue = 1.0f;
-        inline constexpr float kBsecStabilizationReadyValue = 1.0f;
-        inline constexpr float kIaqAdaptiveDeltaDecay = 0.92f;
-        inline constexpr float kIaqAdaptiveHealthAlpha = 0.20f;
-        inline constexpr float kIaqAdaptiveRollbackErrorMargin = 3.0f;
-        inline constexpr uint8_t kIaqAdaptiveRollbackStreak = 6;
-        inline constexpr uint32_t kIaqAdaptiveDigestMs = 60UL * 60UL * 1000UL;
+    namespace wifi
+    {
+        inline constexpr uint32_t kTaskDelayMs = 500UL;
+        inline constexpr uint32_t kConnectTimeoutMs = 15000UL;
+        inline constexpr uint32_t kReconnectIntervalMs = 30000UL;
+        inline constexpr uint8_t kReconnectMaxAttempts = 3;
+        inline constexpr uint32_t kWeatherRefreshMs = 10UL * 60UL * 1000UL;
+        inline constexpr uint32_t kWeatherHttpTimeoutMs = 8000UL;
+
+        inline constexpr const char *kSsid = "Kosan bu nata";
+        inline constexpr const char *kPassword = "immodium";
+
+        inline constexpr float kLatitudeDefault = -6.8981f;
+        inline constexpr float kLongitudeDefault = 107.6349f;
     }
 
     namespace color

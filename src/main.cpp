@@ -6,16 +6,16 @@
 #include "serial_cli.h"
 #include "sensor_manager.h"
 #include "ui_controller.h"
+#include "wifi_manager.h"
 
 namespace
 {
   struct BootDataCheckResult
   {
     bool data_ok = false;
-    bool iaq_ok = false;
   };
 
-  BootDataCheckResult verifyDataAndIaq(SensorManager &sensor_manager)
+  BootDataCheckResult verifySensorData(SensorManager &sensor_manager)
   {
     BootDataCheckResult result;
     const uint32_t start_ms = millis();
@@ -32,19 +32,11 @@ namespace
                               isfinite(snapshot.humidity_pct) &&
                               isfinite(snapshot.pressure_hpa);
 
-      float iaq_value = snapshot.iaq;
-      if (!isfinite(iaq_value) && isfinite(snapshot.iaq_static))
-      {
-        iaq_value = snapshot.iaq_static;
-      }
+      const bool gas_valid = isfinite(snapshot.gas_resistance_kohm) && (snapshot.gas_resistance_kohm > 0.0f);
 
-      const bool iaq_valid = isfinite(iaq_value) && (iaq_value >= 0.0f) && (iaq_value <= 500.0f);
-      const bool accuracy_valid = snapshot.iaq_accuracy <= 3U;
+      result.data_ok = core_valid && gas_valid;
 
-      result.data_ok = core_valid;
-      result.iaq_ok = iaq_valid && accuracy_valid;
-
-      if (result.data_ok && result.iaq_ok)
+      if (result.data_ok)
       {
         break;
       }
@@ -60,31 +52,22 @@ namespace
     const SensorData snapshot = sensor_manager.getData();
     const uint32_t now_ms = millis();
     const bool data_fresh = (snapshot.last_update_ms != 0U) && ((now_ms - snapshot.last_update_ms) <= 5000U);
-
-    const bool iaq_available = isfinite(snapshot.iaq) || isfinite(snapshot.iaq_static);
-    const bool iaq_effective_ok = isfinite(snapshot.iaq_effective) && (snapshot.iaq_effective >= 0.0f) && (snapshot.iaq_effective <= 500.0f);
-    const bool model_metrics_ok = (snapshot.iaq_model_confidence <= 100U) && (snapshot.iaq_model_state <= 3U);
+    const bool gas_valid = isfinite(snapshot.gas_resistance_kohm) && (snapshot.gas_resistance_kohm > 0.0f);
 
     const bool ready = boot_status.lcd_ok &&
                        boot_status.touch_ok &&
                        boot_status.sensor_ok &&
                        boot_status.data_ok &&
-                       boot_status.iaq_ok &&
                        data_fresh &&
-                       iaq_available &&
-                       iaq_effective_ok &&
-                       model_metrics_ok;
+                       gas_valid;
 
     Serial.println("[BOOT] Production readiness checklist");
     Serial.printf("[BOOT]  LCD .......... %s\n", boot_status.lcd_ok ? "OK" : "FAIL");
     Serial.printf("[BOOT]  Touch ........ %s\n", boot_status.touch_ok ? "OK" : "FAIL");
     Serial.printf("[BOOT]  Sensor init .. %s\n", boot_status.sensor_ok ? "OK" : "FAIL");
     Serial.printf("[BOOT]  Data fresh ... %s\n", (boot_status.data_ok && data_fresh) ? "OK" : "FAIL");
-    Serial.printf("[BOOT]  IAQ core ..... %s\n", (boot_status.iaq_ok && iaq_available) ? "OK" : "FAIL");
-    Serial.printf("[BOOT]  IAQ model .... %s (state=%u conf=%u%%)\n",
-                  (iaq_effective_ok && model_metrics_ok) ? "OK" : "FAIL",
-                  snapshot.iaq_model_state,
-                  snapshot.iaq_model_confidence);
+    Serial.printf("[BOOT]  Gas data ..... %s\n", gas_valid ? "OK" : "FAIL");
+    Serial.printf("[BOOT]  WiFi boot .... %s\n", boot_status.wifi_ok ? "OK" : "OFFLINE");
     Serial.printf("[BOOT]  Verdict ...... %s\n", ready ? "READY" : "DEGRADED");
   }
 }
@@ -98,6 +81,7 @@ void setup()
 
   UiController &ui = UiController::instance();
   SensorManager &sensor_manager = SensorManager::instance();
+  WiFiManager &wifi_manager = WiFiManager::instance();
 
   BootDiagStatus boot_status{};
 
@@ -114,25 +98,22 @@ void setup()
   boot_status.sensor_ok = sensor_manager.init();
   ui.bootDiagUpdate(boot_status);
 
+  wifi_manager.init();
+  boot_status.wifi_done = true;
+  boot_status.wifi_ok = false;
+  ui.bootDiagUpdate(boot_status);
+
   TaskHandle_t sensor_task_handle = nullptr;
   xTaskCreatePinnedToCore(SensorManager::taskEntry, "sensorTask", 8192, &sensor_manager, 2, &sensor_task_handle, 0);
+  TaskHandle_t wifi_task_handle = nullptr;
+  xTaskCreatePinnedToCore(WiFiManager::taskEntry, "wifiTask", 8192, &wifi_manager, 1, &wifi_task_handle, 1);
 
   if (boot_status.sensor_ok)
   {
-    const BootDataCheckResult check = verifyDataAndIaq(sensor_manager);
+    const BootDataCheckResult check = verifySensorData(sensor_manager);
     boot_status.data_done = true;
     boot_status.data_ok = check.data_ok;
-    boot_status.iaq_done = true;
-    boot_status.iaq_ok = check.iaq_ok;
-
-    const SensorData snapshot = sensor_manager.getData();
-    const bool model_metrics_ok = isfinite(snapshot.iaq_effective) &&
-                                  (snapshot.iaq_effective >= 0.0f) &&
-                                  (snapshot.iaq_effective <= 500.0f) &&
-                                  (snapshot.iaq_model_confidence <= 100U) &&
-                                  (snapshot.iaq_model_state <= 3U);
-    boot_status.model_done = true;
-    boot_status.model_ok = model_metrics_ok;
+    boot_status.wifi_ok = wifi_manager.isConnected() && wifi_manager.isOnlineMode();
 
     ui.bootDiagUpdate(boot_status);
   }
@@ -140,10 +121,7 @@ void setup()
   {
     boot_status.data_done = true;
     boot_status.data_ok = false;
-    boot_status.iaq_done = true;
-    boot_status.iaq_ok = false;
-    boot_status.model_done = true;
-    boot_status.model_ok = false;
+    boot_status.wifi_ok = wifi_manager.isConnected() && wifi_manager.isOnlineMode();
     ui.bootDiagUpdate(boot_status);
   }
 

@@ -7,42 +7,19 @@
 #include <string.h>
 
 #include "config.h"
+#include "i2c_bus_lock.h"
+#include "wifi_manager.h"
 
 namespace
 {
-    const uint8_t kBsecIaqConfig[] = {
+    const uint8_t kBsecEnvConfig[] = {
 #include "config/bme680/bme680_iaq_33v_3s_4d/bsec_iaq.txt"
     };
 
     constexpr uint32_t kDebugIntervalMs = 10000UL;
-
-    struct PersistedIaqAdaptiveState
-    {
-        uint32_t magic = 0;
-        uint16_t version = 0;
-        uint16_t reserved = 0;
-        float reference_gas_kohm = NAN;
-        float adaptive_delta = 0.0f;
-        uint32_t adaptive_samples = 0;
-        uint8_t model_confidence = 0;
-        uint8_t model_state = cfg::sensor::kIaqModelLearning;
-        uint16_t checksum = 0;
-    };
-
-    constexpr uint32_t kIaqStateMagic = 0x4941514DU; // 'IAQM'
-    constexpr uint16_t kIaqStateVersion = 1;
-
-    uint16_t checksumIaqState(const PersistedIaqAdaptiveState &state)
-    {
-        const uint8_t *ptr = reinterpret_cast<const uint8_t *>(&state);
-        const size_t len = sizeof(PersistedIaqAdaptiveState) - sizeof(state.checksum);
-        uint32_t sum = 0;
-        for (size_t i = 0; i < len; ++i)
-        {
-            sum += ptr[i];
-        }
-        return static_cast<uint16_t>(sum & 0xFFFFU);
-    }
+    constexpr uint32_t kGasTrendWindowMs = 5UL * 60UL * 1000UL;
+    constexpr uint32_t kGasHistoryPushMs = 2UL * 60UL * 1000UL;
+    constexpr float kGasTrendStableDeltaKohm = 0.35f;
 }
 
 ScopedSemaphoreLock::ScopedSemaphoreLock(SemaphoreHandle_t sem, TickType_t timeout_ticks) : sem_(sem)
@@ -220,12 +197,24 @@ uint32_t SensorManager::computeStaleReinitMs(float rate) const
 
 bool SensorManager::i2cPing(TwoWire &bus, uint8_t address) const
 {
+    ScopedI2cBusLock lock(pdMS_TO_TICKS(40));
+    if (!lock.ownsLock())
+    {
+        return false;
+    }
+
     bus.beginTransmission(address);
     return bus.endTransmission() == 0;
 }
 
 bool SensorManager::i2cReadReg(TwoWire &bus, uint8_t address, uint8_t reg, uint8_t &value) const
 {
+    ScopedI2cBusLock lock(pdMS_TO_TICKS(40));
+    if (!lock.ownsLock())
+    {
+        return false;
+    }
+
     bus.beginTransmission(address);
     bus.write(reg);
     if (bus.endTransmission(false) != 0)
@@ -260,8 +249,6 @@ bool SensorManager::isBme68xChip(TwoWire &bus, uint8_t address, uint8_t *chip_id
 
 bool SensorManager::anyBme68xPresentOnBus(TwoWire &bus)
 {
-    // Runtime link probing should be lightweight and avoid register reads
-    // that can spam requestFrom errors on unstable buses.
     return i2cPing(bus, 0x76) || i2cPing(bus, 0x77);
 }
 
@@ -413,15 +400,6 @@ bool SensorManager::ensureStateStoreReady()
     return state_nvs_ready_;
 }
 
-bool SensorManager::ensureIaqStoreReady()
-{
-    if (!iaq_store_ready_)
-    {
-        iaq_store_ready_ = iaq_nvs_.begin("iaqmodel", false);
-    }
-    return iaq_store_ready_;
-}
-
 bool SensorManager::restoreBsecState()
 {
     if (!ensureStateStoreReady())
@@ -477,424 +455,61 @@ void SensorManager::clearBsecStateBlob()
     bsec_nvs_.remove("state");
 }
 
-void SensorManager::loadIaqAdaptiveState()
+void SensorManager::updateGasTrend(uint32_t now_ms)
 {
-    if (!ensureIaqStoreReady())
-    {
-        return;
-    }
-
-    if (!iaq_nvs_.isKey("state"))
-    {
-        return;
-    }
-
-    PersistedIaqAdaptiveState state{};
-    const size_t expected = sizeof(state);
-    const size_t stored = iaq_nvs_.getBytesLength("state");
-    if (stored != expected)
-    {
-        return;
-    }
-
-    const size_t read = iaq_nvs_.getBytes("state", &state, expected);
-    if (read != expected)
-    {
-        return;
-    }
-
-    if ((state.magic != kIaqStateMagic) || (state.version != kIaqStateVersion))
-    {
-        return;
-    }
-
-    if (state.checksum != checksumIaqState(state))
-    {
-        return;
-    }
-
-    if (!isfinite(state.reference_gas_kohm) || (state.reference_gas_kohm <= 0.0f))
-    {
-        return;
-    }
-
-    iaq_reference_gas_kohm_ = state.reference_gas_kohm;
-    iaq_adaptive_delta_ = state.adaptive_delta;
-    iaq_adaptive_samples_ = state.adaptive_samples;
-    iaq_model_confidence_ = state.model_confidence;
-    iaq_model_state_ = state.model_state;
-}
-
-void SensorManager::saveIaqAdaptiveStateIfDue(uint32_t now_ms, bool force)
-{
-    if (!ensureIaqStoreReady())
-    {
-        return;
-    }
-
-    const bool never_saved = (iaq_last_state_save_ms_ == 0U);
-    const uint32_t gap_ms = never_saved ? 0U : (now_ms - iaq_last_state_save_ms_);
-    const bool min_gap_ok = never_saved || (gap_ms >= cfg::sensor::kIaqAdaptiveSaveMinGapMs);
-    const bool interval_ok = never_saved || (gap_ms >= cfg::sensor::kIaqAdaptiveSaveMs);
-    if (!min_gap_ok || (!interval_ok && !force))
-    {
-        return;
-    }
-
-    PersistedIaqAdaptiveState state{};
-    state.magic = kIaqStateMagic;
-    state.version = kIaqStateVersion;
-    state.reference_gas_kohm = iaq_reference_gas_kohm_;
-    state.adaptive_delta = iaq_adaptive_delta_;
-    state.adaptive_samples = iaq_adaptive_samples_;
-    state.model_confidence = iaq_model_confidence_;
-    state.model_state = iaq_model_state_;
-    state.checksum = checksumIaqState(state);
-
-    const size_t saved = iaq_nvs_.putBytes("state", &state, sizeof(state));
-    if (saved == sizeof(state))
-    {
-        iaq_last_state_save_ms_ = now_ms;
-    }
-}
-
-void SensorManager::appendIaqAdaptiveSample(uint32_t now_ms)
-{
-    const uint32_t bucket_ms = static_cast<uint32_t>(cfg::sensor::kIaqAdaptiveBucketMinutes) * 60UL * 1000UL;
-    if ((iaq_last_bucket_ms_ != 0U) && (now_ms - iaq_last_bucket_ms_ < bucket_ms))
-    {
-        return;
-    }
-
     if (!isfinite(live_.gas_resistance_kohm) || (live_.gas_resistance_kohm <= 0.0f))
     {
         return;
     }
 
-    float iaq_value = live_.iaq;
-    if (!isfinite(iaq_value))
-    {
-        iaq_value = live_.iaq_static;
-    }
-    if (!isfinite(iaq_value))
+    if ((gas_history_last_push_ms_ != 0U) && ((now_ms - gas_history_last_push_ms_) < kGasHistoryPushMs))
     {
         return;
     }
 
-    iaq_last_bucket_ms_ = now_ms;
+    gas_history_last_push_ms_ = now_ms;
 
-    IaqAdaptiveSample sample{};
-    sample.ts_ms = now_ms;
-    sample.gas_resistance_kohm = live_.gas_resistance_kohm;
-    sample.iaq = iaq_value;
-    sample.iaq_accuracy = live_.iaq_accuracy;
-
-    iaq_history_[iaq_history_head_] = sample;
-    iaq_history_head_ = (iaq_history_head_ + 1U) % kIaqAdaptiveHistoryCapacity;
-    if (iaq_history_count_ < kIaqAdaptiveHistoryCapacity)
+    gas_history_[gas_history_head_].ts_ms = now_ms;
+    gas_history_[gas_history_head_].gas_kohm = live_.gas_resistance_kohm;
+    gas_history_head_ = (gas_history_head_ + 1U) % kGasHistoryCapacity;
+    if (gas_history_count_ < kGasHistoryCapacity)
     {
-        ++iaq_history_count_;
+        ++gas_history_count_;
     }
 
-    ++iaq_adaptive_samples_;
-}
-
-void SensorManager::updateIaqAdaptiveModel(uint32_t now_ms)
-{
-    ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(20));
-    if (!guard.ownsLock())
+    float baseline = NAN;
+    for (size_t i = 0; i < gas_history_count_; ++i)
     {
-        return;
-    }
-
-    appendIaqAdaptiveSample(now_ms);
-
-    float base_iaq = live_.iaq;
-    if (!isfinite(base_iaq))
-    {
-        base_iaq = live_.iaq_static;
-    }
-
-    if (!isfinite(base_iaq))
-    {
-        live_.iaq_effective = NAN;
-        live_.iaq_adaptive_delta = 0.0f;
-        live_.iaq_model_confidence = 0;
-        live_.iaq_model_state = cfg::sensor::kIaqModelBaseline;
-        return;
-    }
-
-    if (!isfinite(live_.gas_resistance_kohm) || (live_.gas_resistance_kohm <= 0.0f) || (iaq_history_count_ == 0U))
-    {
-        const bool run_in_ready = isfinite(live_.run_in_status) && (live_.run_in_status >= cfg::sensor::kBsecRunInReadyValue);
-        const bool stabilization_ready = isfinite(live_.stabilization_status) && (live_.stabilization_status >= cfg::sensor::kBsecStabilizationReadyValue);
-
-        uint8_t progress_score = 0;
-        if (isfinite(live_.run_in_status) && (live_.run_in_status > 0.0f))
+        const size_t idx = (gas_history_head_ + kGasHistoryCapacity - 1U - i) % kGasHistoryCapacity;
+        const GasHistoryEntry &entry = gas_history_[idx];
+        if ((now_ms - entry.ts_ms) >= kGasTrendWindowMs)
         {
-            progress_score = static_cast<uint8_t>((live_.run_in_status >= 1.0f) ? 100U : lroundf(live_.run_in_status * 100.0f));
-        }
-
-        const uint8_t accuracy_score = static_cast<uint8_t>((static_cast<uint16_t>(live_.iaq_accuracy) * 100U) / cfg::sensor::kIaqAccuracyHigh);
-        iaq_model_confidence_ = static_cast<uint8_t>((static_cast<uint16_t>(progress_score) + static_cast<uint16_t>(accuracy_score)) / 2U);
-        iaq_model_state_ = (run_in_ready && stabilization_ready) ? cfg::sensor::kIaqModelLearning : cfg::sensor::kIaqModelBaseline;
-
-        live_.iaq_effective = base_iaq;
-        live_.iaq_adaptive_delta = 0.0f;
-        live_.iaq_model_confidence = iaq_model_confidence_;
-        live_.iaq_model_state = iaq_model_state_;
-        return;
-    }
-
-    float gas_sum = 0.0f;
-    float good_gas_sum = 0.0f;
-    uint32_t good_acc_count = 0;
-    uint32_t valid_count = 0;
-    for (size_t i = 0; i < iaq_history_count_; ++i)
-    {
-        const IaqAdaptiveSample &sample = iaq_history_[i];
-        if (!isfinite(sample.gas_resistance_kohm) || (sample.gas_resistance_kohm <= 0.0f))
-        {
-            continue;
-        }
-        gas_sum += sample.gas_resistance_kohm;
-        ++valid_count;
-        if (sample.iaq_accuracy >= cfg::sensor::kIaqAdaptiveMinAccuracy)
-        {
-            good_gas_sum += sample.gas_resistance_kohm;
-            ++good_acc_count;
+            baseline = entry.gas_kohm;
+            break;
         }
     }
 
-    if (valid_count == 0U)
+    if (!isfinite(baseline) || (baseline <= 0.0f))
     {
-        live_.iaq_effective = base_iaq;
-        live_.iaq_adaptive_delta = 0.0f;
-        live_.iaq_model_confidence = 0;
-        live_.iaq_model_state = cfg::sensor::kIaqModelBaseline;
+        sensor_data_.gas_delta_5m_kohm = 0.0f;
+        sensor_data_.gas_trend_5m = 0;
         return;
     }
 
-    const float mean_gas_all = gas_sum / static_cast<float>(valid_count);
-    const float mean_gas_good = (good_acc_count > 0U) ? (good_gas_sum / static_cast<float>(good_acc_count)) : NAN;
-    const float mean_gas = isfinite(mean_gas_good) && (mean_gas_good > 0.0f) ? mean_gas_good : mean_gas_all;
-    if (!isfinite(mean_gas) || (mean_gas <= 0.0f))
+    const float delta = live_.gas_resistance_kohm - baseline;
+    sensor_data_.gas_delta_5m_kohm = delta;
+    if (delta > kGasTrendStableDeltaKohm)
     {
-        live_.iaq_effective = base_iaq;
-        live_.iaq_adaptive_delta = 0.0f;
-        live_.iaq_model_confidence = 0;
-        live_.iaq_model_state = cfg::sensor::kIaqModelBaseline;
-        return;
+        sensor_data_.gas_trend_5m = 1;
     }
-
-    if (!isfinite(iaq_reference_gas_kohm_) || (iaq_reference_gas_kohm_ <= 0.0f))
+    else if (delta < -kGasTrendStableDeltaKohm)
     {
-        iaq_reference_gas_kohm_ = mean_gas;
+        sensor_data_.gas_trend_5m = -1;
     }
     else
     {
-        iaq_reference_gas_kohm_ = (iaq_reference_gas_kohm_ * 0.98f) + (mean_gas * 0.02f);
+        sensor_data_.gas_trend_5m = 0;
     }
-
-    const float gas_ratio = live_.gas_resistance_kohm / iaq_reference_gas_kohm_;
-    float target_delta = 0.0f;
-    if (gas_ratio < 1.0f)
-    {
-        target_delta = (1.0f - gas_ratio) * 40.0f;
-    }
-    else
-    {
-        target_delta = -(gas_ratio - 1.0f) * 18.0f;
-    }
-
-    if (target_delta > cfg::sensor::kIaqAdaptiveMaxDelta)
-    {
-        target_delta = cfg::sensor::kIaqAdaptiveMaxDelta;
-    }
-    if (target_delta < -cfg::sensor::kIaqAdaptiveMaxDelta)
-    {
-        target_delta = -cfg::sensor::kIaqAdaptiveMaxDelta;
-    }
-
-    float target_iaq = static_cast<float>(base_iaq + target_delta);
-    if (target_iaq < 0.0f)
-    {
-        target_iaq = 0.0f;
-    }
-    if (target_iaq > 500.0f)
-    {
-        target_iaq = 500.0f;
-    }
-
-    const bool run_in_ready = isfinite(live_.run_in_status) && (live_.run_in_status >= cfg::sensor::kBsecRunInReadyValue);
-    const bool stabilization_ready = isfinite(live_.stabilization_status) && (live_.stabilization_status >= cfg::sensor::kBsecStabilizationReadyValue);
-    const bool history_ready = iaq_history_count_ >= cfg::sensor::kIaqAdaptiveMinSamples;
-    const bool adaptation_ready = run_in_ready && stabilization_ready && history_ready &&
-                                  (live_.iaq_accuracy >= cfg::sensor::kIaqAdaptiveMinAccuracy);
-
-    if (!adaptation_ready)
-    {
-        iaq_adaptive_delta_ *= cfg::sensor::kIaqAdaptiveDeltaDecay;
-        if (fabsf(iaq_adaptive_delta_) < 0.05f)
-        {
-            iaq_adaptive_delta_ = 0.0f;
-        }
-
-        const float base_err = fabsf(target_iaq - base_iaq);
-        iaq_proxy_error_base_ema_ = (iaq_proxy_error_base_ema_ * (1.0f - cfg::sensor::kIaqAdaptiveHealthAlpha)) +
-                                    (base_err * cfg::sensor::kIaqAdaptiveHealthAlpha);
-        iaq_proxy_error_adaptive_ema_ = iaq_proxy_error_base_ema_;
-        iaq_rollback_streak_ = 0;
-
-        const uint32_t max_samples = static_cast<uint32_t>(cfg::sensor::kIaqAdaptiveMinSamples);
-        const uint32_t capped_samples = (iaq_history_count_ > max_samples) ? max_samples : static_cast<uint32_t>(iaq_history_count_);
-        const uint8_t sample_score = static_cast<uint8_t>((capped_samples * 100U) / max_samples);
-        const uint8_t accuracy_score = static_cast<uint8_t>((static_cast<uint16_t>(live_.iaq_accuracy) * 100U) / 3U);
-        iaq_model_confidence_ = static_cast<uint8_t>((static_cast<uint16_t>(sample_score) + static_cast<uint16_t>(accuracy_score)) / 2U);
-        iaq_model_state_ = cfg::sensor::kIaqModelLearning;
-
-        live_.iaq_effective = base_iaq;
-        live_.iaq_adaptive_delta = 0.0f;
-        live_.iaq_model_confidence = iaq_model_confidence_;
-        live_.iaq_model_state = iaq_model_state_;
-
-        if (detailed_debug_ && ((iaq_last_digest_ms_ == 0U) || (now_ms - iaq_last_digest_ms_ >= cfg::sensor::kIaqAdaptiveDigestMs)))
-        {
-            iaq_last_digest_ms_ = now_ms;
-            Serial.printf("[IAQ] digest state=learning conf=%u%% acc=%u runin=%.0f stab=%.0f hist=%lu/%lu\n",
-                          iaq_model_confidence_,
-                          live_.iaq_accuracy,
-                          live_.run_in_status,
-                          live_.stabilization_status,
-                          static_cast<unsigned long>(iaq_history_count_),
-                          static_cast<unsigned long>(kIaqAdaptiveHistoryCapacity));
-        }
-
-        saveIaqAdaptiveStateIfDue(now_ms);
-        return;
-    }
-
-    const float next_delta = iaq_adaptive_delta_ + ((target_delta - iaq_adaptive_delta_) * cfg::sensor::kIaqAdaptiveAlpha);
-    float delta_step = next_delta - iaq_adaptive_delta_;
-    if (delta_step > cfg::sensor::kIaqAdaptiveMaxStep)
-    {
-        delta_step = cfg::sensor::kIaqAdaptiveMaxStep;
-    }
-    if (delta_step < -cfg::sensor::kIaqAdaptiveMaxStep)
-    {
-        delta_step = -cfg::sensor::kIaqAdaptiveMaxStep;
-    }
-    iaq_adaptive_delta_ += delta_step;
-
-    if (live_.iaq_accuracy < cfg::sensor::kIaqAdaptiveMinAccuracy)
-    {
-        iaq_adaptive_delta_ *= 0.85f;
-        iaq_model_state_ = cfg::sensor::kIaqModelFallback;
-    }
-
-    float effective_iaq = base_iaq + iaq_adaptive_delta_;
-    if ((base_iaq >= 200.0f) && (effective_iaq < (base_iaq - cfg::sensor::kIaqAdaptivePoorGuardBand)))
-    {
-        effective_iaq = base_iaq - cfg::sensor::kIaqAdaptivePoorGuardBand;
-    }
-    if (effective_iaq < 0.0f)
-    {
-        effective_iaq = 0.0f;
-    }
-    if (effective_iaq > 500.0f)
-    {
-        effective_iaq = 500.0f;
-    }
-
-    const float base_err = fabsf(target_iaq - base_iaq);
-    const float adaptive_err = fabsf(target_iaq - effective_iaq);
-    iaq_proxy_error_base_ema_ = (iaq_proxy_error_base_ema_ * (1.0f - cfg::sensor::kIaqAdaptiveHealthAlpha)) +
-                                (base_err * cfg::sensor::kIaqAdaptiveHealthAlpha);
-    iaq_proxy_error_adaptive_ema_ = (iaq_proxy_error_adaptive_ema_ * (1.0f - cfg::sensor::kIaqAdaptiveHealthAlpha)) +
-                                    (adaptive_err * cfg::sensor::kIaqAdaptiveHealthAlpha);
-
-    const bool degrade_now = (adaptive_err > (base_err + cfg::sensor::kIaqAdaptiveRollbackErrorMargin)) ||
-                             (iaq_proxy_error_adaptive_ema_ > (iaq_proxy_error_base_ema_ + cfg::sensor::kIaqAdaptiveRollbackErrorMargin));
-    if (degrade_now)
-    {
-        if (iaq_rollback_streak_ < 255U)
-        {
-            ++iaq_rollback_streak_;
-        }
-    }
-    else if (iaq_rollback_streak_ > 0U)
-    {
-        --iaq_rollback_streak_;
-    }
-
-    bool rollback_triggered = false;
-    if (iaq_rollback_streak_ >= cfg::sensor::kIaqAdaptiveRollbackStreak)
-    {
-        rollback_triggered = true;
-        ++iaq_rollback_count_;
-        iaq_rollback_streak_ = 0;
-        iaq_adaptive_delta_ = 0.0f;
-        effective_iaq = base_iaq;
-        iaq_model_state_ = cfg::sensor::kIaqModelFallback;
-    }
-
-    const uint32_t max_samples = static_cast<uint32_t>(cfg::sensor::kIaqAdaptiveMinSamples);
-    const uint32_t capped_samples = (iaq_history_count_ > max_samples) ? max_samples : static_cast<uint32_t>(iaq_history_count_);
-    const uint8_t sample_score = static_cast<uint8_t>((capped_samples * 100U) / max_samples);
-    const uint8_t accuracy_score = static_cast<uint8_t>((good_acc_count * 100U) / valid_count);
-    uint8_t health_score = 100U;
-    if (iaq_proxy_error_adaptive_ema_ > iaq_proxy_error_base_ema_)
-    {
-        int32_t h = static_cast<int32_t>(lroundf(100.0f - (iaq_proxy_error_adaptive_ema_ - iaq_proxy_error_base_ema_) * 8.0f));
-        if (h < 0)
-        {
-            h = 0;
-        }
-        if (h > 100)
-        {
-            h = 100;
-        }
-        health_score = static_cast<uint8_t>(h);
-    }
-    const uint8_t confidence = static_cast<uint8_t>((static_cast<uint16_t>(sample_score) + static_cast<uint16_t>(accuracy_score) + static_cast<uint16_t>(health_score)) / 3U);
-    iaq_model_confidence_ = confidence;
-
-    if (iaq_history_count_ < cfg::sensor::kIaqAdaptiveMinSamples)
-    {
-        iaq_model_state_ = cfg::sensor::kIaqModelLearning;
-    }
-    else if ((live_.iaq_accuracy < cfg::sensor::kIaqAdaptiveMinAccuracy) || (confidence < 40U))
-    {
-        iaq_model_state_ = cfg::sensor::kIaqModelFallback;
-    }
-    else
-    {
-        iaq_model_state_ = cfg::sensor::kIaqModelAdaptive;
-    }
-    if (rollback_triggered)
-    {
-        iaq_model_state_ = cfg::sensor::kIaqModelFallback;
-    }
-
-    live_.iaq_effective = effective_iaq;
-    live_.iaq_adaptive_delta = iaq_adaptive_delta_;
-    live_.iaq_model_confidence = iaq_model_confidence_;
-    live_.iaq_model_state = iaq_model_state_;
-
-    if (detailed_debug_ && ((iaq_last_digest_ms_ == 0U) || (now_ms - iaq_last_digest_ms_ >= cfg::sensor::kIaqAdaptiveDigestMs)))
-    {
-        iaq_last_digest_ms_ = now_ms;
-        Serial.printf("[IAQ] digest state=%u conf=%u%% baseErr=%.2f adaptErr=%.2f emaBase=%.2f emaAdapt=%.2f rb=%lu\n",
-                      iaq_model_state_,
-                      iaq_model_confidence_,
-                      base_err,
-                      adaptive_err,
-                      iaq_proxy_error_base_ema_,
-                      iaq_proxy_error_adaptive_ema_,
-                      static_cast<unsigned long>(iaq_rollback_count_));
-    }
-
-    saveIaqAdaptiveStateIfDue(now_ms, rollback_triggered);
 }
 
 void SensorManager::publishSnapshot(uint32_t now_ms)
@@ -905,25 +520,48 @@ void SensorManager::publishSnapshot(uint32_t now_ms)
         return;
     }
 
-    const bool has_core = isfinite(live_.temperature_c) && isfinite(live_.humidity_pct) && isfinite(live_.pressure_hpa);
+    updateGasTrend(now_ms);
 
-    sensor_data_.temperature_c = live_.temperature_c;
-    sensor_data_.humidity_pct = live_.humidity_pct;
-    sensor_data_.pressure_hpa = live_.pressure_hpa;
-    sensor_data_.gas_resistance_kohm = live_.gas_resistance_kohm;
-    sensor_data_.iaq = isfinite(live_.iaq) ? live_.iaq : live_.iaq_static;
-    sensor_data_.iaq_effective = isfinite(live_.iaq_effective) ? live_.iaq_effective : sensor_data_.iaq;
-    sensor_data_.iaq_adaptive_delta = live_.iaq_adaptive_delta;
-    sensor_data_.iaq_static = live_.iaq_static;
-    sensor_data_.run_in_status = live_.run_in_status;
-    sensor_data_.stabilization_status = live_.stabilization_status;
-    sensor_data_.iaq_accuracy = live_.iaq_accuracy;
-    sensor_data_.iaq_model_confidence = live_.iaq_model_confidence;
-    sensor_data_.iaq_model_state = live_.iaq_model_state;
-    sensor_data_.altitude_m = calcAltitude(live_.pressure_hpa);
+    if (isfinite(live_.temperature_c))
+    {
+        sensor_data_.temperature_c = live_.temperature_c;
+    }
+    if (isfinite(live_.humidity_pct))
+    {
+        sensor_data_.humidity_pct = live_.humidity_pct;
+    }
+    if (isfinite(live_.pressure_hpa) && (live_.pressure_hpa > 0.0f))
+    {
+        sensor_data_.pressure_hpa = live_.pressure_hpa;
+    }
+    if (isfinite(live_.gas_resistance_kohm) && (live_.gas_resistance_kohm > 0.0f))
+    {
+        sensor_data_.gas_resistance_kohm = live_.gas_resistance_kohm;
+    }
+
+    const bool has_core = isfinite(sensor_data_.temperature_c) && isfinite(sensor_data_.humidity_pct) &&
+                          isfinite(sensor_data_.pressure_hpa) && (sensor_data_.pressure_hpa > 0.0f) &&
+                          isfinite(sensor_data_.gas_resistance_kohm) && (sensor_data_.gas_resistance_kohm > 0.0f);
+
+    float effective_pressure_hpa = sensor_data_.pressure_hpa;
+    const WeatherSnapshot weather = WiFiManager::instance().getSnapshot();
+    if (weather.valid && isfinite(weather.surface_pressure_hpa) &&
+        (weather.surface_pressure_hpa >= cfg::sensor::kSeaLevelMinHpa) &&
+        (weather.surface_pressure_hpa <= cfg::sensor::kSeaLevelMaxHpa))
+    {
+        // Blend local pressure and remote surface-pressure reference to reduce short-term noise.
+        constexpr float kWeatherPressureBlend = 0.18f;
+        effective_pressure_hpa = (sensor_data_.pressure_hpa * (1.0f - kWeatherPressureBlend)) +
+                                 (weather.surface_pressure_hpa * kWeatherPressureBlend);
+    }
+
+    sensor_data_.altitude_m = calcAltitude(effective_pressure_hpa);
     sensor_data_.valid = has_core;
-    sensor_data_.last_update_ms = now_ms;
-    last_safe_snapshot_ = sensor_data_;
+    if (has_core)
+    {
+        sensor_data_.last_update_ms = now_ms;
+        last_safe_snapshot_ = sensor_data_;
+    }
 
     live_.has_new_sample = false;
 }
@@ -941,63 +579,6 @@ void SensorManager::refreshAltitudeFromSnapshot()
         sensor_data_.altitude_m = calcAltitude(sensor_data_.pressure_hpa);
         sensor_data_.last_update_ms = millis();
     }
-}
-
-bool SensorManager::isIaqStuckPattern() const
-{
-    const bool iaq_flat = isfinite(live_.iaq) &&
-                          (fabsf(live_.iaq - cfg::sensor::kIaqStuckTarget) <= cfg::sensor::kIaqStuckTolerance);
-    const bool static_flat = isfinite(live_.iaq_static) &&
-                             (fabsf(live_.iaq_static - cfg::sensor::kIaqStuckTarget) <= cfg::sensor::kIaqStuckTolerance);
-
-    const bool still_calibrating = (live_.iaq_accuracy <= cfg::sensor::kIaqAccuracyLow) &&
-                                   (!isfinite(live_.run_in_status) || (live_.run_in_status < cfg::sensor::kBsecRunInReadyValue) ||
-                                    !isfinite(live_.stabilization_status) || (live_.stabilization_status < cfg::sensor::kBsecStabilizationReadyValue));
-
-    return iaq_flat && static_flat && still_calibrating;
-}
-
-void SensorManager::maybeRecoverStuckIaq(uint32_t now_ms)
-{
-    ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(20));
-    if (!guard.ownsLock())
-    {
-        return;
-    }
-
-    if (iaq_stuck_recovery_done_)
-    {
-        return;
-    }
-
-    if (!isIaqStuckPattern())
-    {
-        iaq_stuck_since_ms_ = 0;
-        return;
-    }
-
-    if (iaq_stuck_since_ms_ == 0U)
-    {
-        iaq_stuck_since_ms_ = now_ms;
-        return;
-    }
-
-    if (now_ms - iaq_stuck_since_ms_ < cfg::timing::kIaqStuckTimeoutMs)
-    {
-        return;
-    }
-
-    if (detailed_debug_)
-    {
-        Serial.println("[BME680] IAQ stuck near 50 with low accuracy. Clearing BSEC state and reinitializing once.");
-    }
-
-    clearBsecStateBlob();
-    iaq_stuck_recovery_done_ = true;
-    iaq_stuck_since_ms_ = 0;
-    live_ = LiveReadings{};
-    healthy_ = false;
-    realtime_connected_ = false;
 }
 
 bool SensorManager::loadRuntimeConfig()
@@ -1037,15 +618,16 @@ bool SensorManager::init()
     }
 
     live_ = LiveReadings{};
+    sensor_data_ = SensorData{};
 
     healthy_ = false;
     realtime_connected_ = false;
     link_ok_streak_ = 0;
     link_fail_streak_ = 0;
     last_link_probe_ms_ = 0;
-    last_saved_accuracy_ = 0;
-    iaq_stuck_since_ms_ = 0;
-    iaq_stuck_recovery_done_ = false;
+    gas_history_head_ = 0;
+    gas_history_count_ = 0;
+    gas_history_last_push_ms_ = 0;
 
     bme_wire_ = &Wire;
     bme_addr_ = cfg::pins::kBmeAddressConfigured;
@@ -1056,11 +638,9 @@ bool SensorManager::init()
                        (cfg::pins::kAltI2cScl != cfg::pins::kMainI2cScl);
 
     loadRuntimeConfig();
-    loadIaqAdaptiveState();
 
     if (!main_bus_ready_)
     {
-        // Main I2C bus is expected to be initialized by UI touch init path.
         main_bus_ready_ = true;
     }
     Wire.setClock(400000);
@@ -1111,7 +691,8 @@ bool SensorManager::init()
         bme_addr_ = candidates[i].addr;
         bme_on_alt_bus_ = candidates[i].on_alt_bus;
 
-        begin_ok = bsec_.begin(bme_addr_, *bme_wire_);
+        ScopedI2cBusLock lock(pdMS_TO_TICKS(120));
+        begin_ok = lock.ownsLock() && bsec_.begin(bme_addr_, *bme_wire_);
         if (begin_ok)
         {
             break;
@@ -1125,16 +706,18 @@ bool SensorManager::init()
         return false;
     }
 
-    // Apply only when a measured and intentional compensation value is configured.
     if (fabsf(cfg::sensor::kBsecTemperatureOffsetC) > 0.01f)
     {
         bsec_.setTemperatureOffset(cfg::sensor::kBsecTemperatureOffsetC);
     }
 
-    if (!bsec_.setConfig(kBsecIaqConfig))
     {
-        healthy_ = false;
-        return false;
+        ScopedI2cBusLock lock(pdMS_TO_TICKS(120));
+        if (!lock.ownsLock() || !bsec_.setConfig(kBsecEnvConfig))
+        {
+            healthy_ = false;
+            return false;
+        }
     }
 
     restoreBsecState();
@@ -1142,10 +725,6 @@ bool SensorManager::init()
     stale_reinit_ms_ = cfg::timing::kSensorStaleReinitMs;
 
     bsecSensor sensor_list[] = {
-        BSEC_OUTPUT_IAQ,
-        BSEC_OUTPUT_STATIC_IAQ,
-        BSEC_OUTPUT_RUN_IN_STATUS,
-        BSEC_OUTPUT_STABILIZATION_STATUS,
         BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
         BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
         BSEC_OUTPUT_RAW_PRESSURE,
@@ -1160,7 +739,9 @@ bool SensorManager::init()
     bool subscribed = false;
     for (float candidate_rate : rates)
     {
-        if (bsec_.updateSubscription(sensor_list,
+        ScopedI2cBusLock lock(pdMS_TO_TICKS(120));
+        if (lock.ownsLock() &&
+            bsec_.updateSubscription(sensor_list,
                                      static_cast<uint8_t>(sizeof(sensor_list) / sizeof(sensor_list[0])),
                                      candidate_rate))
         {
@@ -1206,21 +787,6 @@ void SensorManager::onBsecOutputs(const bsecOutputs &outputs)
         const bsecData &out = outputs.output[i];
         switch (out.sensor_id)
         {
-        case BSEC_OUTPUT_IAQ:
-            if (isfinite(out.signal))
-            {
-                live_.iaq = out.signal;
-            }
-            live_.iaq_accuracy = out.accuracy;
-            has_output = true;
-            break;
-        case BSEC_OUTPUT_STATIC_IAQ:
-            if (isfinite(out.signal))
-            {
-                live_.iaq_static = out.signal;
-            }
-            has_output = true;
-            break;
         case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE:
             if (isfinite(out.signal))
             {
@@ -1236,7 +802,6 @@ void SensorManager::onBsecOutputs(const bsecOutputs &outputs)
             has_output = true;
             break;
         case BSEC_OUTPUT_RAW_PRESSURE:
-            // Bosch BSEC2 Arduino wrapper already converts pressure to hPa.
             if (isfinite(out.signal) && (out.signal > 0.0f))
             {
                 live_.pressure_hpa = out.signal;
@@ -1244,19 +809,10 @@ void SensorManager::onBsecOutputs(const bsecOutputs &outputs)
             has_output = true;
             break;
         case BSEC_OUTPUT_RAW_GAS:
-            // BSEC2 output is in Ohm; convert to kOhm for UI and logs.
             if (isfinite(out.signal) && (out.signal > 0.0f))
             {
                 live_.gas_resistance_kohm = out.signal / 1000.0f;
             }
-            has_output = true;
-            break;
-        case BSEC_OUTPUT_RUN_IN_STATUS:
-            live_.run_in_status = out.signal;
-            has_output = true;
-            break;
-        case BSEC_OUTPUT_STABILIZATION_STATUS:
-            live_.stabilization_status = out.signal;
             has_output = true;
             break;
         default:
@@ -1276,6 +832,14 @@ SensorData SensorManager::getData() const
     ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(30));
     if (guard.ownsLock())
     {
+        if (sensor_data_.valid)
+        {
+            return sensor_data_;
+        }
+        if (last_safe_snapshot_.valid)
+        {
+            return last_safe_snapshot_;
+        }
         return sensor_data_;
     }
     return last_safe_snapshot_;
@@ -1303,23 +867,14 @@ void SensorManager::printStatus(Stream &out) const
                    static_cast<int>(bsec_.status),
                    static_cast<int>(bsec_.sensor.status));
 
-        out.printf("[SENSOR] data T=%.2f C H=%.2f %% P=%.2f hPa Alt=%.1f m Gas=%.2f kOhm IAQ=%.1f static=%.1f acc=%u runin=%.0f stab=%.0f\n",
+        out.printf("[SENSOR] data T=%.2f C H=%.2f %% P=%.2f hPa Alt=%.1f m Gas=%.2f kOhm dGas5m=%+.2f trend=%d\n",
                    snapshot.temperature_c,
                    snapshot.humidity_pct,
                    snapshot.pressure_hpa,
                    snapshot.altitude_m,
                    snapshot.gas_resistance_kohm,
-                   snapshot.iaq,
-                   snapshot.iaq_static,
-                   snapshot.iaq_accuracy,
-                   snapshot.run_in_status,
-                   snapshot.stabilization_status);
-
-        out.printf("[SENSOR] iaq_model effective=%.1f delta=%+.1f conf=%u%% state=%u\n",
-                   snapshot.iaq_effective,
-                   snapshot.iaq_adaptive_delta,
-                   snapshot.iaq_model_confidence,
-                   snapshot.iaq_model_state);
+                   snapshot.gas_delta_5m_kohm,
+                   static_cast<int>(snapshot.gas_trend_5m));
     }
     else
     {
@@ -1331,74 +886,6 @@ void SensorManager::printStatus(Stream &out) const
                    sea_level_hpa_,
                    static_cast<int>(bsec_.status),
                    static_cast<int>(bsec_.sensor.status));
-    }
-}
-
-void SensorManager::printIaqModelStatus(Stream &out) const
-{
-    const SensorData snapshot = getData();
-    out.printf("[IAQ] model state=%u confidence=%u%% history=%lu/%lu ref_gas=%.2f kOhm delta=%+.2f effective=%.1f\n",
-               snapshot.iaq_model_state,
-               snapshot.iaq_model_confidence,
-               static_cast<unsigned long>(iaq_history_count_),
-               static_cast<unsigned long>(kIaqAdaptiveHistoryCapacity),
-               iaq_reference_gas_kohm_,
-               snapshot.iaq_adaptive_delta,
-               snapshot.iaq_effective);
-    out.printf("[IAQ] health emaBase=%.2f emaAdapt=%.2f rbStreak=%u rbCount=%lu\n",
-               iaq_proxy_error_base_ema_,
-               iaq_proxy_error_adaptive_ema_,
-               iaq_rollback_streak_,
-               static_cast<unsigned long>(iaq_rollback_count_));
-}
-
-void SensorManager::printIaqModelDigest(Stream &out) const
-{
-    const SensorData snapshot = getData();
-    out.printf("[IAQ] digest state=%u conf=%u%% acc=%u runin=%.0f stab=%.0f hist=%lu/%lu eff=%.1f\n",
-               snapshot.iaq_model_state,
-               snapshot.iaq_model_confidence,
-               snapshot.iaq_accuracy,
-               snapshot.run_in_status,
-               snapshot.stabilization_status,
-               static_cast<unsigned long>(iaq_history_count_),
-               static_cast<unsigned long>(kIaqAdaptiveHistoryCapacity),
-               snapshot.iaq_effective);
-}
-
-void SensorManager::resetIaqAdaptiveModel(bool clear_history)
-{
-    iaq_reference_gas_kohm_ = NAN;
-    iaq_adaptive_delta_ = 0.0f;
-    iaq_proxy_error_base_ema_ = 0.0f;
-    iaq_proxy_error_adaptive_ema_ = 0.0f;
-    iaq_adaptive_samples_ = 0;
-    iaq_rollback_count_ = 0;
-    iaq_model_confidence_ = 0;
-    iaq_model_state_ = cfg::sensor::kIaqModelLearning;
-    iaq_last_bucket_ms_ = 0;
-    iaq_last_state_save_ms_ = 0;
-    iaq_last_digest_ms_ = 0;
-    iaq_rollback_streak_ = 0;
-
-    if (clear_history)
-    {
-        iaq_history_head_ = 0;
-        iaq_history_count_ = 0;
-        for (size_t i = 0; i < kIaqAdaptiveHistoryCapacity; ++i)
-        {
-            iaq_history_[i] = IaqAdaptiveSample{};
-        }
-    }
-
-    live_.iaq_effective = NAN;
-    live_.iaq_adaptive_delta = 0.0f;
-    live_.iaq_model_confidence = 0;
-    live_.iaq_model_state = cfg::sensor::kIaqModelLearning;
-
-    if (ensureIaqStoreReady())
-    {
-        iaq_nvs_.remove("state");
     }
 }
 
@@ -1414,9 +901,9 @@ void SensorManager::printHelp(Stream &out) const
     out.println("[CMD] sensor reinit            -> force BME680/BSEC reinit");
     out.println("[CMD] i2c scan                 -> run quick main/alt I2C scan now");
     out.println("[CMD] debug detail on|off      -> force detailed debug output");
-    out.println("[CMD] iaq model status         -> show adaptive IAQ model diagnostics");
-    out.println("[CMD] iaq model digest         -> show concise adaptive runtime digest");
-    out.println("[CMD] iaq model reset          -> clear adaptive IAQ model + history");
+    out.println("[CMD] wifi status              -> show WiFi/weather runtime status");
+    out.println("[CMD] weather status           -> show weather snapshot and age");
+    out.println("[CMD] weather fetch now        -> trigger immediate Open-Meteo fetch");
 }
 
 void SensorManager::scanI2CBuses(Stream &out)
@@ -1496,7 +983,15 @@ void SensorManager::taskLoop()
             realtime_connected_ = false;
         }
 
-        const bool run_ok = bsec_.run();
+        bool run_ok = false;
+        {
+            ScopedI2cBusLock lock(pdMS_TO_TICKS(120));
+            if (lock.ownsLock())
+            {
+                run_ok = bsec_.run();
+            }
+        }
+
         if (!run_ok)
         {
             const bool has_hard_error = (bsec_.status < BSEC_OK) || (bsec_.sensor.status < BME68X_OK);
@@ -1525,51 +1020,39 @@ void SensorManager::taskLoop()
         run_fail_streak = 0;
 
         bool has_new_sample = false;
-        uint8_t latest_accuracy = 0;
+        bool has_core_live = false;
         {
             ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(20));
             if (guard.ownsLock())
             {
                 has_new_sample = live_.has_new_sample;
-                latest_accuracy = live_.iaq_accuracy;
+                has_core_live = isfinite(live_.temperature_c) &&
+                                isfinite(live_.humidity_pct) &&
+                                isfinite(live_.pressure_hpa) && (live_.pressure_hpa > 0.0f) &&
+                                isfinite(live_.gas_resistance_kohm) && (live_.gas_resistance_kohm > 0.0f);
             }
         }
 
         if (has_new_sample)
         {
-            const bool publish_due = (last_publish_ms_ == 0U) ||
-                                     (now_ms - last_publish_ms_ >= cfg::timing::kSensorRefreshMs);
+            const bool publish_due = has_core_live &&
+                                     ((last_publish_ms_ == 0U) ||
+                                      (now_ms - last_publish_ms_ >= cfg::timing::kSensorRefreshMs));
             if (publish_due)
             {
-                updateIaqAdaptiveModel(now_ms);
                 publishSnapshot(now_ms);
                 last_publish_ms_ = now_ms;
-
-                ScopedSemaphoreLock guard(sensor_mutex_, pdMS_TO_TICKS(20));
-                if (guard.ownsLock())
-                {
-                    latest_accuracy = live_.iaq_accuracy;
-                }
             }
 
-            if ((latest_accuracy > last_saved_accuracy_) ||
-                (now_ms - last_state_save_ms_ >= cfg::timing::kBsecStateSaveMs))
+            if (now_ms - last_state_save_ms_ >= cfg::timing::kBsecStateSaveMs)
             {
                 if (now_ms - last_state_save_ms_ >= cfg::timing::kBsecStateSaveMinGapMs)
                 {
                     if (persistBsecState())
                     {
                         last_state_save_ms_ = now_ms;
-                        last_saved_accuracy_ = latest_accuracy;
                     }
                 }
-            }
-
-            maybeRecoverStuckIaq(now_ms);
-            if (!healthy_)
-            {
-                vTaskDelay(wait_ticks);
-                continue;
             }
         }
 
