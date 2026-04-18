@@ -130,6 +130,25 @@ namespace cfg
         inline constexpr float kKnownAltitudeMaxM = 9000.0f;
         inline constexpr float kIaqStuckTarget = 50.0f;
         inline constexpr float kIaqStuckTolerance = 2.0f;
+
+        inline constexpr uint8_t kIaqAdaptiveBucketMinutes = 5;
+        inline constexpr uint16_t kIaqAdaptiveWindowHours = 72;
+        inline constexpr uint16_t kIaqAdaptiveMinSamples = 72;
+        inline constexpr uint32_t kIaqAdaptiveSaveMs = 30UL * 60UL * 1000UL;
+        inline constexpr uint32_t kIaqAdaptiveSaveMinGapMs = 10UL * 60UL * 1000UL;
+
+        inline constexpr float kIaqAdaptiveAlpha = 0.15f;
+        inline constexpr float kIaqAdaptiveMaxDelta = 25.0f;
+        inline constexpr float kIaqAdaptiveMaxStep = 2.0f;
+        inline constexpr float kIaqAdaptivePoorGuardBand = 5.0f;
+        inline constexpr uint8_t kIaqAdaptiveMinAccuracy = 2;
+        inline constexpr float kIaqAdaptiveRunInReady = 1.0f;
+        inline constexpr float kIaqAdaptiveStabilizationReady = 1.0f;
+        inline constexpr float kIaqAdaptiveDeltaDecay = 0.92f;
+        inline constexpr float kIaqAdaptiveHealthAlpha = 0.20f;
+        inline constexpr float kIaqAdaptiveRollbackErrorMargin = 3.0f;
+        inline constexpr uint8_t kIaqAdaptiveRollbackStreak = 6;
+        inline constexpr uint32_t kIaqAdaptiveDigestMs = 60UL * 60UL * 1000UL;
     }
 
     namespace color

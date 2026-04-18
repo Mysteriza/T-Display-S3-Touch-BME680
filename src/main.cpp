@@ -53,6 +53,39 @@ namespace
 
     return result;
   }
+
+  void printBootReadinessChecklist(const BootDiagStatus &boot_status, SensorManager &sensor_manager)
+  {
+    const SensorData snapshot = sensor_manager.getData();
+    const uint32_t now_ms = millis();
+    const bool data_fresh = (snapshot.last_update_ms != 0U) && ((now_ms - snapshot.last_update_ms) <= 5000U);
+
+    const bool iaq_available = isfinite(snapshot.iaq) || isfinite(snapshot.iaq_static);
+    const bool iaq_effective_ok = isfinite(snapshot.iaq_effective) && (snapshot.iaq_effective >= 0.0f) && (snapshot.iaq_effective <= 500.0f);
+    const bool model_metrics_ok = (snapshot.iaq_model_confidence <= 100U) && (snapshot.iaq_model_state <= 3U);
+
+    const bool ready = boot_status.lcd_ok &&
+                       boot_status.touch_ok &&
+                       boot_status.sensor_ok &&
+                       boot_status.data_ok &&
+                       boot_status.iaq_ok &&
+                       data_fresh &&
+                       iaq_available &&
+                       iaq_effective_ok &&
+                       model_metrics_ok;
+
+    Serial.println("[BOOT] Production readiness checklist");
+    Serial.printf("[BOOT]  LCD .......... %s\n", boot_status.lcd_ok ? "OK" : "FAIL");
+    Serial.printf("[BOOT]  Touch ........ %s\n", boot_status.touch_ok ? "OK" : "FAIL");
+    Serial.printf("[BOOT]  Sensor init .. %s\n", boot_status.sensor_ok ? "OK" : "FAIL");
+    Serial.printf("[BOOT]  Data fresh ... %s\n", (boot_status.data_ok && data_fresh) ? "OK" : "FAIL");
+    Serial.printf("[BOOT]  IAQ core ..... %s\n", (boot_status.iaq_ok && iaq_available) ? "OK" : "FAIL");
+    Serial.printf("[BOOT]  IAQ model .... %s (state=%u conf=%u%%)\n",
+                  (iaq_effective_ok && model_metrics_ok) ? "OK" : "FAIL",
+                  snapshot.iaq_model_state,
+                  snapshot.iaq_model_confidence);
+    Serial.printf("[BOOT]  Verdict ...... %s\n", ready ? "READY" : "DEGRADED");
+  }
 }
 
 void setup()
@@ -100,6 +133,8 @@ void setup()
     boot_status.iaq_ok = false;
     ui.bootDiagUpdate(boot_status);
   }
+
+  printBootReadinessChecklist(boot_status, sensor_manager);
 
   ui.bootDiagFinish(3000);
 

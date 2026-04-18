@@ -7,6 +7,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
+#include "config.h"
+
 struct SensorData
 {
     float temperature_c = NAN;
@@ -15,10 +17,14 @@ struct SensorData
     float altitude_m = NAN;
     float gas_resistance_kohm = NAN;
     float iaq = NAN;
+    float iaq_effective = NAN;
+    float iaq_adaptive_delta = 0.0f;
     float iaq_static = NAN;
     float run_in_status = NAN;
     float stabilization_status = NAN;
     uint8_t iaq_accuracy = 0;
+    uint8_t iaq_model_confidence = 0;
+    uint8_t iaq_model_state = 0;
     bool valid = false;
     uint32_t last_update_ms = 0;
 };
@@ -62,8 +68,10 @@ public:
     void resetSeaLevelPressure();
 
     void printStatus(Stream &out) const;
+    void printIaqModelStatus(Stream &out) const;
     void printHelp(Stream &out) const;
     void scanI2CBuses(Stream &out);
+    void resetIaqAdaptiveModel(bool clear_history);
 
 private:
     SensorManager() = default;
@@ -78,10 +86,22 @@ private:
         float gas_resistance_kohm = NAN;
         float iaq = NAN;
         float iaq_static = NAN;
+        float iaq_effective = NAN;
+        float iaq_adaptive_delta = 0.0f;
         float run_in_status = NAN;
         float stabilization_status = NAN;
+        uint8_t iaq_model_confidence = 0;
+        uint8_t iaq_model_state = 0;
         uint8_t iaq_accuracy = 0;
         bool has_new_sample = false;
+    };
+
+    struct IaqAdaptiveSample
+    {
+        uint32_t ts_ms = 0;
+        float gas_resistance_kohm = NAN;
+        float iaq = NAN;
+        uint8_t iaq_accuracy = 0;
     };
 
     struct BmeCandidate
@@ -93,10 +113,16 @@ private:
 
     bool loadRuntimeConfig();
     bool ensureStateStoreReady();
+    bool ensureIaqStoreReady();
 
     bool restoreBsecState();
     bool persistBsecState();
     void clearBsecStateBlob();
+
+    void loadIaqAdaptiveState();
+    void saveIaqAdaptiveStateIfDue(uint32_t now_ms, bool force = false);
+    void appendIaqAdaptiveSample(uint32_t now_ms);
+    void updateIaqAdaptiveModel(uint32_t now_ms);
 
     void publishSnapshot(uint32_t now_ms);
     void refreshAltitudeFromSnapshot();
@@ -139,6 +165,7 @@ private:
     TwoWire alt_wire_{1};
     Preferences bsec_nvs_;
     Preferences cfg_nvs_;
+    Preferences iaq_nvs_;
 
     bool healthy_ = false;
     bool realtime_connected_ = false;
@@ -148,6 +175,7 @@ private:
     bool detailed_debug_ = false;
     bool cfg_ready_ = false;
     bool state_nvs_ready_ = false;
+    bool iaq_store_ready_ = false;
 
     float active_bsec_rate_ = BSEC_SAMPLE_RATE_LP;
     float sea_level_hpa_ = 1013.25f;
@@ -163,12 +191,32 @@ private:
     uint32_t last_link_probe_ms_ = 0;
     uint32_t stale_reinit_ms_ = 0;
     uint32_t iaq_stuck_since_ms_ = 0;
+    uint32_t iaq_last_bucket_ms_ = 0;
+    uint32_t iaq_last_state_save_ms_ = 0;
+    uint32_t iaq_last_digest_ms_ = 0;
 
     uint8_t link_ok_streak_ = 0;
     uint8_t link_fail_streak_ = 0;
     uint8_t last_saved_accuracy_ = 0;
 
     bool iaq_stuck_recovery_done_ = false;
+
+    static constexpr size_t kIaqAdaptiveHistoryCapacity =
+        (static_cast<size_t>(cfg::sensor::kIaqAdaptiveWindowHours) * 60U) /
+        static_cast<size_t>(cfg::sensor::kIaqAdaptiveBucketMinutes);
+    IaqAdaptiveSample iaq_history_[kIaqAdaptiveHistoryCapacity]{};
+    size_t iaq_history_head_ = 0;
+    size_t iaq_history_count_ = 0;
+
+    float iaq_reference_gas_kohm_ = NAN;
+    float iaq_adaptive_delta_ = 0.0f;
+    float iaq_proxy_error_base_ema_ = 0.0f;
+    float iaq_proxy_error_adaptive_ema_ = 0.0f;
+    uint32_t iaq_adaptive_samples_ = 0;
+    uint32_t iaq_rollback_count_ = 0;
+    uint8_t iaq_model_confidence_ = 0;
+    uint8_t iaq_model_state_ = 0;
+    uint8_t iaq_rollback_streak_ = 0;
 };
 
 class SerialCLI

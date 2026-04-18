@@ -40,6 +40,7 @@ src/
 
 - **Real-time Environment Data**: Temperature, Humidity, Air Pressure, and calculated Altitude.
 - **AQI Monitoring**: Real-time Gas Resistance and Indoor Air Quality (IAQ) from Bosch BSEC2.
+- **Adaptive IAQ Statusing (Page 02)**: Hybrid IAQ banding that keeps BSEC output as baseline and applies bounded gas-history correction with confidence + fallback safeguards.
 - **System Telemetry**: CPU Load estimate (% from UI task activity), Uptime counter, and Battery Percentage.
 - **Power Optimization**: Background sensor processing with reduced screen redraws.
 - **Serial Diagnostics**: Built-in CLI for status checks and manual calibration.
@@ -207,6 +208,22 @@ Available commands:
 - `i2c scan`: Scan the I2C bus for devices
 - `debug detail on`: Turn on periodic verbose debugging
 - `debug detail off`: Turn off verbose debugging
+- `iaq model status`: Show IAQ adaptive model diagnostics (confidence, state, reference gas, delta)
+- `iaq model digest`: Show concise IAQ adaptive health digest (EMA baseline/adaptive proxy error and rollback counters)
+- `iaq model reset`: Reset IAQ adaptive model and clear local learning history
+
+Adaptive IAQ production safeguards:
+
+- Adaptive correction only becomes active when run-in and stabilization are ready and confidence history is sufficient.
+- Anti-regression guard continuously compares adaptive output against a gas-derived proxy target.
+- Automatic rollback resets adaptive correction to baseline if adaptive path degrades repeatedly.
+- Periodic digest output is rate-limited (hourly in detailed debug mode) to avoid serial spam and extra power draw.
+
+Boot production checklist:
+
+- Firmware prints a boot-time readiness checklist to serial for quick deployment validation.
+- Checklist covers LCD, touch, sensor init, fresh data availability, IAQ core validity, and IAQ model sanity.
+- Final verdict is reported as `READY` or `DEGRADED`.
 
 Notes:
 

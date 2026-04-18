@@ -1040,6 +1040,10 @@ void UiController::updateValues()
         const char *acc_text = (acc_level == 0U) ? "Very Low" : (acc_level == 1U) ? "Low"
                                                             : (acc_level == 2U)   ? "Medium"
                                                                                   : "High";
+        const char *model_text = (data.iaq_model_state == 2U)   ? "Adaptive"
+                                 : (data.iaq_model_state == 1U) ? "Learning"
+                                 : (data.iaq_model_state == 3U) ? "Fallback"
+                                                                : "Baseline";
         uint32_t acc_color = cfg::color::kError;
         if (acc_level == 2U)
         {
@@ -1049,7 +1053,11 @@ void UiController::updateValues()
         {
             acc_color = cfg::color::kStatusOk;
         }
-        lv_label_set_text_fmt(page_aqi_.accuracy, "Accuracy\n%s", acc_text);
+        lv_label_set_text_fmt(page_aqi_.accuracy,
+                              "Accuracy\n%s %u%%\n%s",
+                              acc_text,
+                              data.iaq_model_confidence,
+                              model_text);
         lv_obj_set_style_text_color(page_aqi_.accuracy, lv_color_hex(acc_color), 0);
 
         float iaq_display = data.iaq;
@@ -1072,11 +1080,17 @@ void UiController::updateValues()
         }
 
         iaq_value = clampI32(iaq_value, 0, 500);
-        lv_arc_set_value(page_aqi_.iaq_arc, iaq_value);
+
+        int32_t iaq_effective = iaq_value;
+        if (isfinite(data.iaq_effective))
+        {
+            iaq_effective = clampI32(roundToInt(data.iaq_effective), 0, 500);
+        }
+        lv_arc_set_value(page_aqi_.iaq_arc, iaq_effective);
 
         if (isfinite(iaq_display))
         {
-            const IaqDescriptor descriptor = describeIaqStatus(iaq_value);
+            const IaqDescriptor descriptor = describeIaqStatus(iaq_effective);
             lv_label_set_text_fmt(page_aqi_.iaq_status, "Status\n%s", descriptor.status);
             lv_obj_set_style_arc_color(page_aqi_.iaq_arc, lv_color_hex(descriptor.status_color), LV_PART_INDICATOR);
             lv_obj_set_style_text_color(page_aqi_.iaq_status, lv_color_hex(descriptor.status_color), 0);

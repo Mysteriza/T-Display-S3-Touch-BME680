@@ -153,6 +153,28 @@ void SerialCLI::handleCommand(char *line)
         return;
     }
 
+    if ((argc >= 3U) && (strcmp(argv[0], "iaq") == 0) && (strcmp(argv[1], "model") == 0))
+    {
+        if (strcmp(argv[2], "status") == 0)
+        {
+            sensor_manager_.printIaqModelStatus(Serial);
+            return;
+        }
+
+        if (strcmp(argv[2], "digest") == 0)
+        {
+            sensor_manager_.printIaqModelStatus(Serial);
+            return;
+        }
+
+        if (strcmp(argv[2], "reset") == 0)
+        {
+            sensor_manager_.resetIaqAdaptiveModel(true);
+            Serial.println("[CMD] IAQ model reset complete.");
+            return;
+        }
+    }
+
     if ((argc >= 3U) && (strcmp(argv[0], "debug") == 0) && (strcmp(argv[1], "detail") == 0))
     {
         if (strcmp(argv[2], "on") == 0)
