@@ -1092,7 +1092,7 @@ void UiController::buildPageOutdoors(lv_obj_t *parent)
                                                card_h,
                                                "Temp: -- C",
                                                &page_outdoor_.temp,
-                                               &lv_font_montserrat_12);
+                                               &lv_font_montserrat_14);
     (void)temp_card;
 
     lv_obj_t *humidity_card = createSingleLineCard(parent,
@@ -1102,7 +1102,7 @@ void UiController::buildPageOutdoors(lv_obj_t *parent)
                                                    card_h,
                                                    "Hum: --%",
                                                    &page_outdoor_.humidity,
-                                                   &lv_font_montserrat_12);
+                                                   &lv_font_montserrat_14);
     (void)humidity_card;
 
     lv_obj_t *rain_card = createSingleLineCard(parent,
@@ -1112,7 +1112,7 @@ void UiController::buildPageOutdoors(lv_obj_t *parent)
                                                card_h,
                                                "Rain: -- mm",
                                                &page_outdoor_.rain,
-                                               &lv_font_montserrat_12);
+                                               &lv_font_montserrat_14);
     (void)rain_card;
 
     lv_obj_t *clouds_card = createSingleLineCard(parent,
@@ -1122,7 +1122,7 @@ void UiController::buildPageOutdoors(lv_obj_t *parent)
                                                  card_h,
                                                  "Clouds: --%",
                                                  &page_outdoor_.clouds,
-                                                 &lv_font_montserrat_12);
+                                                 &lv_font_montserrat_14);
     (void)clouds_card;
 
     if (!wifi_connected)

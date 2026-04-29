@@ -41,7 +41,7 @@ src/
 - **Gas Monitoring (Page 02)**: Gas Resolution gauge, large Gas Status label, and 5-minute Gas Trend (Rising/Stable/Falling) computed against a rolling 30-second gas history baseline.
 - **System Telemetry**: UI task load estimate, Uptime counter, and Battery Percentage.
 - **Connectivity Detail (Page 03)**: WiFi status indicator (green connected / red offline), Last Fetch timestamp (`HH:MM:SS`, 24-hour WIB from internet time), CPU Load (%), and Storage.
-- **Outdoor Weather Page (Page 04)**: Automatically enabled when WiFi is connected; displays weather, temperature, humidity, rain amount, and cloud coverage as single-line card text so the label and value stay on one row without overlap. The page no longer creates stray placeholder labels, so there is no leftover default "Text" object in the corner.
+- **Outdoor Weather Page (Page 04)**: Automatically enabled when WiFi is connected; displays weather, temperature, humidity, rain amount, and cloud coverage as single-line card text so the label and value stay on one row without overlap. Weather keeps its current size, while Temp, Hum, Rain, and Clouds use slightly larger text for better readability.
 - **Online Weather Context**: BMKG weather API fetches weather summary every 10 minutes in online mode. If you need a different local provider or region, you can replace the endpoint and parser in `src/wifi_manager.cpp`.
 - **Power Optimization**: Background sensor processing with reduced screen redraws.
 - **Serial Diagnostics**: Built-in CLI for status checks and manual calibration.
