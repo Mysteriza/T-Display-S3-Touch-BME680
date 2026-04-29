@@ -54,7 +54,7 @@ namespace cfg
         inline constexpr uint32_t kSensorTaskDelayMs = 200UL;
         inline constexpr uint32_t kSensorInitRetryMs = 1000UL;
         inline constexpr uint32_t kSensorLinkProbeMs = 5000UL;
-        inline constexpr uint32_t kBootDataCheckMs = 15000UL;
+        inline constexpr uint32_t kBootDataCheckMs = 20000UL;
 
         inline constexpr uint32_t kBsecStateSaveMs = 4UL * 60UL * 60UL * 1000UL; // 4 Hours
         inline constexpr uint32_t kBsecStateSaveMinGapMs = 10UL * 60UL * 1000UL; // 10 Minutes
@@ -145,18 +145,15 @@ namespace cfg
     namespace wifi
     {
         inline constexpr uint32_t kTaskDelayMs = 500UL;
-        inline constexpr uint32_t kBootConnectWindowMs = 10000UL;
-        inline constexpr uint32_t kConnectTimeoutMs = 15000UL;
+        inline constexpr uint32_t kBootConnectWindowMs = 15000UL;
+        inline constexpr uint32_t kConnectTimeoutMs = 20000UL;
         inline constexpr uint32_t kReconnectIntervalMs = 30000UL;
         inline constexpr uint8_t kReconnectMaxAttempts = 3;
-        inline constexpr uint32_t kWeatherRefreshMs = 10UL * 60UL * 1000UL;
+        inline constexpr uint32_t kWeatherRefreshMs = 60UL * 60UL * 1000UL; // 1 Hour
         inline constexpr uint32_t kWeatherHttpTimeoutMs = 8000UL;
 
         inline constexpr const char *kSsid = "Kosan bu nata";
         inline constexpr const char *kPassword = "immodium";
-
-        inline constexpr float kLatitudeDefault = -6.8981f;
-        inline constexpr float kLongitudeDefault = 107.6349f;
     }
 
     namespace color
@@ -170,5 +167,17 @@ namespace cfg
         inline constexpr uint32_t kStatusOk = 0x39FF14;
         inline constexpr uint32_t kError = 0xFF3B30;
         inline constexpr uint32_t kBootChecking = 0xFFD60A;
+
+        inline constexpr uint32_t kBootGradientStart = 0x00FFFF;
+        inline constexpr uint32_t kBootGradientEnd = 0x39FF14;
+        inline constexpr uint32_t kBootAccent = 0xFF6B35;
+        inline constexpr uint32_t kBootSuccess = 0x00FF88;
+    }
+
+    namespace boot_ui
+    {
+        inline constexpr uint32_t kTitleDelayMs = 150;
+        inline constexpr uint32_t kLineDelayMs = 80;
+        inline constexpr uint32_t kProgressBarMs = 200;
     }
 } // namespace cfg

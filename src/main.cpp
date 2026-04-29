@@ -79,10 +79,23 @@ namespace
     Serial.printf("[BOOT]  LCD .......... %s\n", boot_status.lcd_ok ? "OK" : "FAIL");
     Serial.printf("[BOOT]  Touch ........ %s\n", boot_status.touch_ok ? "OK" : "FAIL");
     Serial.printf("[BOOT]  Sensor init .. %s\n", boot_status.sensor_ok ? "OK" : "FAIL");
-    Serial.printf("[BOOT]  Data fresh ... %s\n", (boot_status.data_ok && data_fresh) ? "OK" : "FAIL");
+    Serial.printf("[BOOT]  Gas Data ..... %s\n", (boot_status.data_ok && data_fresh) ? "OK" : "FAIL");
     Serial.printf("[BOOT]  Gas data ..... %s\n", gas_valid ? "OK" : "FAIL");
     Serial.printf("[BOOT]  WiFi boot .... %s\n", boot_status.wifi_ok ? "OK" : "OFFLINE");
     Serial.printf("[BOOT]  Verdict ...... %s\n", ready ? "READY" : "DEGRADED");
+
+    if (!boot_status.data_ok)
+    {
+      Serial.printf("[BOOT]  DEBUG: sensor valid=%d, temp=%f, hum=%f, pres=%f\n",
+                    snapshot.valid,
+                    snapshot.temperature_c,
+                    snapshot.humidity_pct,
+                    snapshot.pressure_hpa);
+      Serial.printf("[BOOT]  DEBUG: gas_valid=%d, gas_res=%f, last_update=%lu\n",
+                    gas_valid,
+                    snapshot.gas_resistance_kohm,
+                    static_cast<unsigned long>(snapshot.last_update_ms));
+    }
   }
 }
 
@@ -135,17 +148,14 @@ void setup()
     const BootDataCheckResult check = verifySensorData(sensor_manager);
     boot_status.data_done = true;
     boot_status.data_ok = check.data_ok;
-    boot_status.wifi_ok = wifi_manager.isConnected();
-
-    ui.bootDiagUpdate(boot_status);
   }
   else
   {
     boot_status.data_done = true;
     boot_status.data_ok = false;
-    boot_status.wifi_ok = wifi_manager.isConnected();
-    ui.bootDiagUpdate(boot_status);
   }
+
+  boot_status.wifi_ok = wifi_manager.isConnected();
 
   printBootReadinessChecklist(boot_status, sensor_manager);
 

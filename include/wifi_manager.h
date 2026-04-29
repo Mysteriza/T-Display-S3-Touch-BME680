@@ -7,7 +7,14 @@
 struct WeatherSnapshot
 {
     bool valid = false;
-    float surface_pressure_hpa = NAN;
+    float temperature_c = NAN;
+    float humidity_pct = NAN;
+    float precipitation_mm = 0.0f;
+    uint8_t cloud_coverage_pct = 0;
+    uint8_t weather_code = 0;
+    char weather_desc[32] = {0};
+    char local_datetime[24] = {0};
+    char forecast_time[12] = {0};
     uint32_t last_update_ms = 0;
     uint32_t last_update_epoch_utc = 0;
 };
@@ -27,15 +34,13 @@ public:
     uint32_t lastUpdateAgeMs(uint32_t now_ms) const;
     WeatherSnapshot getSnapshot() const;
 
+    bool isInitialized() const { return mutex_ != nullptr; }
+
     bool forceFetchNow();
     const char *lastErrorText() const;
     void printStatus(Stream &out) const;
 
 private:
-    WiFiManager() = default;
-    WiFiManager(const WiFiManager &) = delete;
-    WiFiManager &operator=(const WiFiManager &) = delete;
-
     enum class State : uint8_t
     {
         BootScan = 0,
@@ -57,8 +62,9 @@ private:
         MutexTimeout,
     };
 
+    int32_t clampI32(int32_t value, int32_t low, int32_t high) const;
     bool connectWithTimeout(uint32_t timeout_ms);
-    bool fetchOpenMeteo();
+    bool fetchBmkg();
     bool parseWeatherPayload(const String &payload, WeatherSnapshot &snapshot) const;
     bool parseNumberAfterKey(const String &src, const char *key, float &out_value) const;
     void ensureTimeSync();

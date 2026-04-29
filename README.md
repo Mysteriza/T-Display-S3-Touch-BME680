@@ -34,7 +34,7 @@ src/
   power_mgmt.cpp    # Power management logic
   sensor_manager.cpp# Sensor processing
   ui_controller.cpp # UI lifecycle
-  wifi_manager.cpp  # WiFi + Open-Meteo runtime
+  wifi_manager.cpp  # WiFi + BMKG weather runtime
 ```
 
 ## Features
@@ -43,7 +43,8 @@ src/
 - **Gas Monitoring (Page 02)**: Gas Resolution gauge, large Gas Status label, and 5-minute Gas Trend (Rising/Stable/Falling) computed against a rolling 30-second gas history baseline.
 - **System Telemetry**: UI task load estimate, Uptime counter, and Battery Percentage.
 - **Connectivity Detail (Page 03)**: WiFi status indicator (green connected / red offline), Last Fetch timestamp (`HH:MM:SS`, 24-hour WIB from internet time), CPU Load (%), and Storage.
-- **Online Weather Context**: Open-Meteo fetches **MSL pressure (`pressure_msl`)** every 10 minutes in online mode.
+- **Outdoor Weather Page (Page 04)**: Automatically enabled when WiFi is connected; displays condition, outdoor temperature, humidity, rain level, and cloud coverage.
+- **Online Weather Context**: BMKG weather API fetches weather summary every 10 minutes in online mode. If you need a different local provider or region, you can replace the endpoint and parser in `src/wifi_manager.cpp`.
 - **Power Optimization**: Background sensor processing with reduced screen redraws.
 - **Serial Diagnostics**: Built-in CLI for status checks and manual calibration.
 - **Extended Boot Self-Check**: Verifies display, touch, sensor init, fresh data, and WiFi boot state before entering runtime.
@@ -59,8 +60,9 @@ src/
 - Page 03 Storage refresh: **30 seconds**.
 - Page 03 WiFi Status refresh: **5 seconds**.
 - Page 03 Last Fetch label refresh: **30 seconds**.
+- Page 04 Outdoor weather refresh: **30 seconds**.
 - Boot data verification window: **up to 15 seconds**.
-- Open-Meteo refresh interval: **10 minutes**, active only in online mode.
+- BMKG refresh interval: **10 minutes**, active only in online mode.
 - Reconnect policy after runtime disconnect: **every 30 seconds up to 3 attempts**, then offline mode.
 
 Temperature compensation policy:
@@ -195,10 +197,11 @@ python3 -m esptool --chip esp32s3 --port /dev/ttyUSB0 --baud 460800 write_flash 
 
 Once flashed, the monitor will immediately boot up and begin calibrating the sensor. The touch screen can be used to navigate between logical pages:
 
-- **Swipe Left/Right** on the touch screen to move between Environment, Gas, and System pages.
+- **Swipe Left/Right** on the touch screen to move between Environment, Gas, System, and (if WiFi is connected) Outdoor page.
 - The UI will automatically hide after inactivity to preserve battery but will continue sampling in the background. Tap the screen or press the wake button to turn on the screen.
 - Page 02 focuses on gas-only diagnostics: Gauge, Status, and 5-minute Trend.
 - Page 03 includes WiFi mode, Last Fetch time (`HH:MM:SS`), CPU Load (%), and Storage.
+- Page 04 (Outdoor) appears only when WiFi is connected. It shows weather condition text, outdoor temp, humidity, rain level, and cloud coverage.
 
 ### Serial interface (CLI)
 
@@ -223,8 +226,8 @@ Available commands:
 - `debug detail on`: Turn on periodic verbose debugging
 - `debug detail off`: Turn off verbose debugging
 - `wifi status`: Show WiFi state + weather context status
-- `weather status`: Show latest Open-Meteo **pressure_msl** snapshot and age
-- `weather fetch now`: Trigger immediate Open-Meteo fetch (includes explicit failure reason)
+- `weather status`: Show latest BMKG weather snapshot (temperature, humidity, clouds, description) and age
+- `weather fetch now`: Trigger immediate BMKG weather fetch (includes explicit failure reason)
 
 Weather runtime policy:
 
@@ -232,13 +235,14 @@ Weather runtime policy:
 - If WiFi/internet is unavailable, firmware enters offline mode and keeps local sensor operation fully active.
 - If runtime link drops while previously online, firmware retries every 30 seconds up to 3 attempts.
 - After 3 failed retries, firmware locks into offline mode (no aggressive reconnect loop).
-- Open-Meteo scheduler is disabled while offline and resumes automatically when online.
-- Altitude uses local sensor pressure and calibrated sea-level pressure (`set slp` / `set alt`) without Open-Meteo blending so local calibration stays accurate.
+- BMKG scheduler is disabled while offline and resumes automatically when online.
+- Altitude uses local sensor pressure and calibrated sea-level pressure (`set slp` / `set alt`) without weather blending so local calibration stays accurate.
+- BMKG endpoint currently uses a fixed `adm4` location in `src/wifi_manager.cpp`; change it there if you want another region.
 
 Boot production checklist:
 
 - Firmware prints a boot-time readiness checklist to serial for quick deployment validation.
-- Checklist covers LCD, touch, sensor init, fresh sensor data availability, and WiFi boot state.
+- Checklist covers LCD, touch, sensor init, fresh gas data availability, and WiFi boot state.
 - Final verdict is reported as `READY` or `DEGRADED`.
 
 Notes:

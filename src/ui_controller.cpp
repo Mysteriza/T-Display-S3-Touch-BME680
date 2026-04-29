@@ -365,6 +365,137 @@ namespace
         }
         return cfg::color::kStatusOk;
     }
+
+    const char *weatherConditionText(uint8_t code)
+    {
+        switch (code)
+        {
+        case 0:
+            return "Clear";
+        case 1:
+            return "Mainly Clear";
+        case 2:
+            return "Partly Cloudy";
+        case 3:
+            return "Overcast";
+        case 45:
+        case 48:
+            return "Fog";
+        case 51:
+        case 53:
+        case 55:
+            return "Drizzle";
+        case 56:
+        case 57:
+            return "Freezing Drizzle";
+        case 61:
+        case 63:
+        case 65:
+            return "Rain";
+        case 66:
+        case 67:
+            return "Freezing Rain";
+        case 71:
+        case 73:
+        case 75:
+            return "Snow";
+        case 77:
+            return "Snow Grains";
+        case 80:
+        case 81:
+        case 82:
+            return "Rain Showers";
+        case 85:
+        case 86:
+            return "Snow Showers";
+        case 95:
+            return "Thunderstorm";
+        case 96:
+        case 99:
+            return "Thunder + Hail";
+        default:
+            return "Unknown";
+        }
+    }
+
+    uint32_t weatherConditionColor(uint8_t code)
+    {
+        if (code == 0 || code == 1)
+        {
+            return cfg::color::kStatusOk;
+        }
+        if (code == 2 || code == 3)
+        {
+            return cfg::color::kBootChecking;
+        }
+        if (code >= 45 && code <= 57)
+        {
+            return 0x5DADE2;
+        }
+        if (code >= 61 && code <= 67)
+        {
+            return 0x3498DB;
+        }
+        if (code >= 71 && code <= 77)
+        {
+            return 0xECF0F1;
+        }
+        if (code >= 80 && code <= 82)
+        {
+            return 0x2980B9;
+        }
+        if (code >= 85 && code <= 86)
+        {
+            return 0xBDC3C7;
+        }
+        if (code >= 95)
+        {
+            return cfg::color::kError;
+        }
+        return cfg::color::kTextDim;
+    }
+
+    const char *rainProbabilityText(float precipitation_mm)
+    {
+        if (!isfinite(precipitation_mm) || precipitation_mm < 0.0f)
+        {
+            return "0%";
+        }
+        if (precipitation_mm < 0.1f)
+        {
+            return "<1%";
+        }
+        if (precipitation_mm < 2.5f)
+        {
+            return "Low";
+        }
+        if (precipitation_mm < 7.5f)
+        {
+            return "Med";
+        }
+        return "High";
+    }
+
+    uint32_t rainProbabilityColor(float precipitation_mm)
+    {
+        if (!isfinite(precipitation_mm) || precipitation_mm < 0.0f)
+        {
+            return cfg::color::kStatusOk;
+        }
+        if (precipitation_mm < 0.1f)
+        {
+            return cfg::color::kStatusOk;
+        }
+        if (precipitation_mm < 2.5f)
+        {
+            return cfg::color::kBootChecking;
+        }
+        if (precipitation_mm < 7.5f)
+        {
+            return 0xFF8C32;
+        }
+        return cfg::color::kError;
+    }
 }
 
 bool UiController::probeTouchAddress(uint8_t address)
@@ -561,52 +692,152 @@ void UiController::bootDiagBegin()
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
     boot_title_ = lv_label_create(screen);
-    lv_label_set_text(boot_title_, "SYSTEM SELF-CHECK");
+    lv_label_set_text(boot_title_, "ENV_MONITOR");
     lv_obj_set_style_text_color(boot_title_, lv_color_hex(cfg::color::kValue), 0);
-    lv_obj_set_style_text_font(boot_title_, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(boot_title_, &lv_font_montserrat_22, 0);
     lv_obj_align(boot_title_, LV_ALIGN_TOP_MID, 0, 8);
 
-    boot_lcd_ = lv_label_create(screen);
-    boot_touch_ = lv_label_create(screen);
-    boot_sensor_ = lv_label_create(screen);
-    boot_data_ = lv_label_create(screen);
-    boot_wifi_ = lv_label_create(screen);
+    boot_subtitle_ = lv_label_create(screen);
+    lv_label_set_text(boot_subtitle_, "System Self-Check");
+    lv_obj_set_style_text_color(boot_subtitle_, lv_color_hex(cfg::color::kTextDim), 0);
+    lv_obj_set_style_text_font(boot_subtitle_, &lv_font_montserrat_12, 0);
+    lv_obj_align(boot_subtitle_, LV_ALIGN_TOP_MID, 0, 28);
 
-    lv_obj_set_style_text_font(boot_lcd_, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_font(boot_touch_, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_font(boot_sensor_, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_font(boot_data_, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_font(boot_wifi_, &lv_font_montserrat_12, 0);
-    lv_obj_set_width(boot_lcd_, cfg::display::kWidth - 20);
-    lv_obj_set_width(boot_touch_, cfg::display::kWidth - 20);
-    lv_obj_set_width(boot_sensor_, cfg::display::kWidth - 20);
-    lv_obj_set_width(boot_data_, cfg::display::kWidth - 20);
-    lv_obj_set_width(boot_wifi_, cfg::display::kWidth - 20);
+    const lv_coord_t line_x = 24;
+    const lv_coord_t y0 = 50;
+    const lv_coord_t step = 18;
 
-    const lv_coord_t x = 10;
-    const lv_coord_t y0 = 34;
-    const lv_coord_t step = 20;
-    lv_obj_align(boot_lcd_, LV_ALIGN_TOP_LEFT, x, y0 + (step * 0));
-    lv_obj_align(boot_touch_, LV_ALIGN_TOP_LEFT, x, y0 + (step * 1));
-    lv_obj_align(boot_sensor_, LV_ALIGN_TOP_LEFT, x, y0 + (step * 2));
-    lv_obj_align(boot_data_, LV_ALIGN_TOP_LEFT, x, y0 + (step * 3));
-    lv_obj_align(boot_wifi_, LV_ALIGN_TOP_LEFT, x, y0 + (step * 4));
+    boot_items_[0].label = lv_label_create(screen);
+    boot_items_[0].icon = lv_label_create(screen);
+    boot_items_[0].name = "LCD";
+    boot_items_[0].done = false;
+    boot_items_[0].ok = false;
+
+    boot_items_[1].label = lv_label_create(screen);
+    boot_items_[1].icon = lv_label_create(screen);
+    boot_items_[1].name = "Touch";
+    boot_items_[1].done = false;
+    boot_items_[1].ok = false;
+
+    boot_items_[2].label = lv_label_create(screen);
+    boot_items_[2].icon = lv_label_create(screen);
+    boot_items_[2].name = "Sensor";
+    boot_items_[2].done = false;
+    boot_items_[2].ok = false;
+
+    boot_items_[3].label = lv_label_create(screen);
+    boot_items_[3].icon = lv_label_create(screen);
+    boot_items_[3].name = "Gas Data";
+    boot_items_[3].done = false;
+    boot_items_[3].ok = false;
+
+    boot_items_[4].label = lv_label_create(screen);
+    boot_items_[4].icon = lv_label_create(screen);
+    boot_items_[4].name = "WiFi";
+    boot_items_[4].done = false;
+    boot_items_[4].ok = false;
+
+    for (uint8_t i = 0; i < 5U; ++i)
+    {
+        lv_obj_set_style_text_font(boot_items_[i].label, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(boot_items_[i].icon, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(boot_items_[i].label, lv_color_hex(cfg::color::kTextDim), 0);
+        lv_obj_set_style_text_color(boot_items_[i].icon, lv_color_hex(cfg::color::kTextDim), 0);
+        lv_label_set_text(boot_items_[i].icon, " ");
+        lv_obj_align(boot_items_[i].icon, LV_ALIGN_TOP_LEFT, line_x - 12, y0 + (step * i));
+        char line[48] = {0};
+        snprintf(line, sizeof(line), "%-8s [..]", boot_items_[i].name);
+        lv_label_set_text(boot_items_[i].label, line);
+        lv_obj_align(boot_items_[i].label, LV_ALIGN_TOP_LEFT, line_x, y0 + (step * i));
+    }
+
+    boot_version_ = lv_label_create(screen);
+    lv_label_set_text(boot_version_, "v0.2.0");
+    lv_obj_set_style_text_color(boot_version_, lv_color_hex(cfg::color::kTextDim), 0);
+    lv_obj_set_style_text_font(boot_version_, &lv_font_montserrat_12, 0);
+    lv_obj_align(boot_version_, LV_ALIGN_BOTTOM_MID, 0, -4);
+
+    boot_current_item_ = 0;
+    boot_animating_ = false;
+    boot_animation_step_ = 0;
+    boot_last_anim_ms_ = 0;
 
     lv_scr_load(screen);
 }
 
 void UiController::bootDiagUpdate(const BootDiagStatus &status)
 {
-    if (!lvgl_ready_ || (boot_lcd_ == nullptr))
+    if (!lvgl_ready_)
     {
         return;
     }
 
-    setBootLine(boot_lcd_, "LCD", status.lcd_done, status.lcd_ok);
-    setBootLine(boot_touch_, "Touch", status.touch_done, status.touch_ok);
-    setBootLine(boot_sensor_, "Sensor Init", status.sensor_done, status.sensor_ok);
-    setBootLine(boot_data_, "Fresh Data", status.data_done, status.data_ok);
-    setBootLine(boot_wifi_, "WiFi Boot", status.wifi_done, status.wifi_ok);
+    for (uint8_t i = 0; i < 5U; ++i)
+    {
+        const BootItem &item = boot_items_[i];
+        if (item.label == nullptr)
+        {
+            continue;
+        }
+
+        uint32_t color = cfg::color::kTextDim;
+        const char *status_str = "[..]";
+        bool show = false;
+
+        if (i == 0)
+        {
+            show = status.lcd_done;
+            if (show)
+            {
+                color = status.lcd_ok ? cfg::color::kStatusOk : cfg::color::kError;
+                status_str = status.lcd_ok ? "[OK]" : "[FAIL]";
+            }
+        }
+        else if (i == 1)
+        {
+            show = status.touch_done;
+            if (show)
+            {
+                color = status.touch_ok ? cfg::color::kStatusOk : cfg::color::kError;
+                status_str = status.touch_ok ? "[OK]" : "[FAIL]";
+            }
+        }
+        else if (i == 2)
+        {
+            show = status.sensor_done;
+            if (show)
+            {
+                color = status.sensor_ok ? cfg::color::kStatusOk : cfg::color::kError;
+                status_str = status.sensor_ok ? "[OK]" : "[FAIL]";
+            }
+        }
+        else if (i == 3)
+        {
+            show = status.data_done;
+            if (show)
+            {
+                color = status.data_ok ? cfg::color::kStatusOk : cfg::color::kError;
+                status_str = status.data_ok ? "[OK]" : "[FAIL]";
+            }
+        }
+        else if (i == 4)
+        {
+            show = status.wifi_done;
+            if (show)
+            {
+                color = status.wifi_ok ? cfg::color::kStatusOk : cfg::color::kBootChecking;
+                status_str = status.wifi_ok ? "[OK]" : "[OFFLINE]";
+            }
+        }
+
+        if (show)
+        {
+            char line[48] = {0};
+            snprintf(line, sizeof(line), "%-8s %s", item.name, status_str);
+            lv_label_set_text(item.label, line);
+            lv_obj_set_style_text_color(item.label, lv_color_hex(color), 0);
+        }
+    }
 
     lv_tick_inc(20);
     lv_timer_handler();
@@ -632,7 +863,7 @@ void UiController::bootDiagFinish(uint32_t hold_ms)
 lv_obj_t *UiController::createHeader(lv_obj_t *parent, const char *page_info, uint8_t page_index)
 {
     lv_obj_t *left = lv_label_create(parent);
-    lv_label_set_text(left, LV_SYMBOL_DIRECTORY " Env_monitor");
+    lv_label_set_text(left, LV_SYMBOL_DIRECTORY " Env");
     lv_obj_set_style_text_color(left, lv_color_hex(cfg::color::kValue), 0);
     lv_obj_set_style_text_font(left, &lv_font_montserrat_14, 0);
     lv_obj_align(left, LV_ALIGN_TOP_LEFT, cfg::display::kMarginLeft, cfg::display::kHeaderY);
@@ -643,7 +874,7 @@ lv_obj_t *UiController::createHeader(lv_obj_t *parent, const char *page_info, ui
     lv_obj_set_style_text_font(right, &lv_font_montserrat_12, 0);
     lv_obj_align(right, LV_ALIGN_TOP_RIGHT, -cfg::display::kMarginRight, cfg::display::kHeaderRightY);
 
-    if (page_index < 3U)
+    if (page_index < 4U)
     {
         env_headers_[page_index] = left;
     }
@@ -680,7 +911,7 @@ lv_obj_t *UiController::createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord
 
 void UiController::buildPageEnv(lv_obj_t *parent)
 {
-    createHeader(parent, "PAGE 01 / ENV", 0);
+    createHeader(parent, "01 / ENV", 0);
 
     battery_labels_[0] = lv_label_create(parent);
     lv_label_set_text(battery_labels_[0], LV_SYMBOL_BATTERY_EMPTY " --%");
@@ -736,7 +967,7 @@ void UiController::buildPageEnv(lv_obj_t *parent)
 
 void UiController::buildPageAqi(lv_obj_t *parent)
 {
-    createHeader(parent, "PAGE 02 / GAS", 1);
+    createHeader(parent, "02 / GAS", 1);
 
     battery_labels_[1] = lv_label_create(parent);
     lv_label_set_text(battery_labels_[1], LV_SYMBOL_BATTERY_EMPTY " --%");
@@ -799,9 +1030,122 @@ void UiController::buildPageAqi(lv_obj_t *parent)
     lv_obj_align(page_aqi_.gas_trend_value, LV_ALIGN_BOTTOM_RIGHT, -10, -12);
 }
 
+void UiController::buildPageOutdoors(lv_obj_t *parent)
+{
+    bool wifi_connected = false;
+    if (WiFiManager::instance().isInitialized())
+    {
+        wifi_connected = WiFiManager::instance().isConnected();
+    }
+    const char *page_title = "04 / OUTDOOR";
+    createHeader(parent, page_title, 3);
+
+    battery_labels_[3] = lv_label_create(parent);
+    lv_label_set_text(battery_labels_[3], LV_SYMBOL_BATTERY_EMPTY " --%");
+    lv_obj_set_style_text_color(battery_labels_[3], lv_color_hex(cfg::color::kTextDim), 0);
+    lv_obj_set_style_text_font(battery_labels_[3], &lv_font_montserrat_12, 0);
+    lv_obj_align(battery_labels_[3], LV_ALIGN_TOP_MID, 0, 8);
+
+    page_outdoor_.no_wifi = lv_label_create(parent);
+    lv_label_set_text(page_outdoor_.no_wifi, "WiFi Required");
+    lv_obj_set_style_text_color(page_outdoor_.no_wifi, lv_color_hex(cfg::color::kBootChecking), 0);
+    lv_obj_set_style_text_font(page_outdoor_.no_wifi, &lv_font_montserrat_14, 0);
+    lv_obj_align(page_outdoor_.no_wifi, LV_ALIGN_CENTER, 0, 0);
+
+    page_outdoor_.datetime = lv_label_create(parent);
+    page_outdoor_.weather_status = lv_label_create(parent);
+    page_outdoor_.temp = lv_label_create(parent);
+    page_outdoor_.humidity = lv_label_create(parent);
+    page_outdoor_.rain = lv_label_create(parent);
+    page_outdoor_.clouds = lv_label_create(parent);
+
+    const lv_coord_t card_w = 94;
+    const lv_coord_t card_h = 48;
+    const lv_coord_t left_x = cfg::display::kMarginLeft;
+    const lv_coord_t mid_x = left_x + card_w + 8;
+    const lv_coord_t right_x = mid_x + card_w + 8;
+    const lv_coord_t row0_y = 34;
+    const lv_coord_t row1_y = 88;
+
+    lv_obj_t *time_card = createValueCard(parent,
+                                          left_x,
+                                          row0_y,
+                                          card_w,
+                                          card_h,
+                                          "TIME",
+                                          &page_outdoor_.datetime,
+                                          &lv_font_montserrat_12);
+    (void)time_card;
+
+    lv_obj_t *weather_card = createValueCard(parent,
+                                             mid_x,
+                                             row0_y,
+                                             card_w,
+                                             card_h,
+                                             "WEATHER",
+                                             &page_outdoor_.weather_status,
+                                             &lv_font_montserrat_12);
+    (void)weather_card;
+
+    lv_obj_t *temp_card = createValueCard(parent,
+                                          right_x,
+                                          row0_y,
+                                          card_w,
+                                          card_h,
+                                          "TEMP",
+                                          &page_outdoor_.temp,
+                                          &lv_font_montserrat_12);
+    (void)temp_card;
+
+    lv_obj_t *humidity_card = createValueCard(parent,
+                                              left_x,
+                                              row1_y,
+                                              card_w,
+                                              card_h,
+                                              "HUMIDITY",
+                                              &page_outdoor_.humidity,
+                                              &lv_font_montserrat_12);
+    (void)humidity_card;
+
+    lv_obj_t *rain_card = createValueCard(parent,
+                                          mid_x,
+                                          row1_y,
+                                          card_w,
+                                          card_h,
+                                          "RAIN PROBS",
+                                          &page_outdoor_.rain,
+                                          &lv_font_montserrat_12);
+    (void)rain_card;
+
+    lv_obj_t *clouds_card = createValueCard(parent,
+                                            right_x,
+                                            row1_y,
+                                            card_w,
+                                            card_h,
+                                            "CLOUDS",
+                                            &page_outdoor_.clouds,
+                                            &lv_font_montserrat_12);
+    (void)clouds_card;
+
+    if (!wifi_connected)
+    {
+        lv_obj_add_flag(page_outdoor_.datetime, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(page_outdoor_.weather_status, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(page_outdoor_.temp, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(page_outdoor_.humidity, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(page_outdoor_.rain, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(page_outdoor_.clouds, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (wifi_connected)
+    {
+        lv_obj_add_flag(page_outdoor_.no_wifi, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 void UiController::buildPageSys(lv_obj_t *parent)
 {
-    createHeader(parent, "PAGE 03 / SYSTEM", 2);
+    createHeader(parent, "03 / SYSTEM", 2);
 
     battery_labels_[2] = lv_label_create(parent);
     lv_label_set_text(battery_labels_[2], LV_SYMBOL_BATTERY_EMPTY " --%");
@@ -821,6 +1165,16 @@ void UiController::buildPageSys(lv_obj_t *parent)
     const lv_coord_t right_x = cfg::display::kMarginLeft + card_w + cfg::display::kCardGap;
     const lv_coord_t row1_y = 64;
     const lv_coord_t row2_y = 108;
+
+    lv_obj_t *fetch_card = createValueCard(parent,
+                                           left_x,
+                                           row2_y,
+                                           card_w,
+                                           card_h,
+                                           "LAST FETCH",
+                                           &page_sys_.weather_update,
+                                           &lv_font_montserrat_12);
+    (void)fetch_card;
 
     lv_obj_t *cpu_card = createValueCard(parent,
                                          left_x,
@@ -843,7 +1197,7 @@ void UiController::buildPageSys(lv_obj_t *parent)
     (void)storage_card;
 
     lv_obj_t *wifi_card = createValueCard(parent,
-                                          left_x,
+                                          right_x,
                                           row2_y,
                                           card_w,
                                           card_h,
@@ -852,33 +1206,30 @@ void UiController::buildPageSys(lv_obj_t *parent)
                                           &lv_font_montserrat_12);
     (void)wifi_card;
 
-    lv_obj_t *fetch_card = createValueCard(parent,
-                                           right_x,
-                                           row2_y,
-                                           card_w,
-                                           card_h,
-                                           LV_SYMBOL_REFRESH " Last Fetch",
-                                           &page_sys_.weather_update,
-                                           &lv_font_montserrat_12);
-    (void)fetch_card;
-
     lv_label_set_text(page_sys_.cpu_load, "0%");
     lv_label_set_text(page_sys_.storage, "--/-- MB");
-    lv_label_set_text(page_sys_.wifi_status, "Offline");
-    lv_obj_set_style_text_color(page_sys_.wifi_status, lv_color_hex(cfg::color::kError), 0);
     lv_label_set_text(page_sys_.weather_update, "--:--:--");
     lv_obj_set_style_text_color(page_sys_.weather_update, lv_color_hex(cfg::color::kTextDim), 0);
+    lv_label_set_text(page_sys_.wifi_status, "Offline");
+    lv_obj_set_style_text_color(page_sys_.wifi_status, lv_color_hex(cfg::color::kError), 0);
 }
 
 void UiController::setPage(uint8_t page_index)
 {
-    if (page_index > 2U)
+    bool wifi_connected = false;
+    if (WiFiManager::instance().isInitialized())
+    {
+        wifi_connected = WiFiManager::instance().isConnected();
+    }
+    const uint8_t max_page = wifi_connected ? 3U : 2U;
+
+    if (page_index > max_page)
     {
         return;
     }
 
     current_page_ = page_index;
-    for (uint8_t i = 0; i < 3U; ++i)
+    for (uint8_t i = 0; i < 4U; ++i)
     {
         if (pages_[i] == nullptr)
         {
@@ -903,13 +1254,19 @@ void UiController::buildPages()
         return;
     }
 
+    bool wifi_connected = false;
+    if (WiFiManager::instance().isInitialized())
+    {
+        wifi_connected = WiFiManager::instance().isConnected();
+    }
+
     lv_obj_t *root = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(root, lv_color_hex(cfg::color::kBackground), 0);
     lv_obj_set_style_border_width(root, 0, 0);
     lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(root, UiController::gestureEventCallback, LV_EVENT_GESTURE, nullptr);
 
-    for (uint8_t i = 0; i < 3U; ++i)
+    for (uint8_t i = 0; i < 4U; ++i)
     {
         pages_[i] = lv_obj_create(root);
         lv_obj_set_size(pages_[i], cfg::display::kWidth, cfg::display::kHeight);
@@ -924,6 +1281,14 @@ void UiController::buildPages()
     buildPageEnv(pages_[0]);
     buildPageAqi(pages_[1]);
     buildPageSys(pages_[2]);
+    buildPageOutdoors(pages_[3]);
+
+    outdoor_page_enabled_ = wifi_connected;
+
+    if (!wifi_connected)
+    {
+        lv_obj_add_flag(pages_[3], LV_OBJ_FLAG_HIDDEN);
+    }
 
     setPage(0);
     lv_scr_load(root);
@@ -1005,11 +1370,13 @@ void UiController::onGesture(lv_event_t *event)
     const lv_dir_t direction = lv_indev_get_gesture_dir(indev);
     if (direction == LV_DIR_LEFT)
     {
-        setPage((current_page_ + 1U) % 3U);
+        const uint8_t max_page = outdoor_page_enabled_ ? 3U : 2U;
+        setPage((current_page_ + 1U) % (max_page + 1U));
     }
     else if (direction == LV_DIR_RIGHT)
     {
-        setPage((current_page_ + 2U) % 3U);
+        const uint8_t max_page = outdoor_page_enabled_ ? 3U : 2U;
+        setPage((current_page_ + max_page) % (max_page + 1U));
     }
 }
 
@@ -1144,7 +1511,7 @@ void UiController::updateBatteryLabels()
     bat_last_label_ms_ = now_ms;
 
     const lv_color_t text_color = batteryColorFromPercent(shown_pct, bat_usb_power_);
-    for (uint8_t i = 0; i < 3U; ++i)
+    for (uint8_t i = 0; i < 4U; ++i)
     {
         if (battery_labels_[i] == nullptr)
         {
@@ -1284,10 +1651,13 @@ void UiController::updateValues()
         {
             last_fetch_label_refresh_ms_ = now_ms;
             const WeatherSnapshot weather = wifi.getSnapshot();
-            if (!weather.valid || (weather.last_update_ms == 0U) || (weather.last_update_epoch_utc == 0U) || !wifi.hasFreshWeather(now_ms))
+            if ((page_sys_.weather_update == nullptr) || !weather.valid || (weather.last_update_ms == 0U) || (weather.last_update_epoch_utc == 0U) || !wifi.hasFreshWeather(now_ms))
             {
-                lv_label_set_text(page_sys_.weather_update, "--:--:--");
-                lv_obj_set_style_text_color(page_sys_.weather_update, lv_color_hex(cfg::color::kTextDim), 0);
+                if (page_sys_.weather_update != nullptr)
+                {
+                    lv_label_set_text(page_sys_.weather_update, "--:--:--");
+                    lv_obj_set_style_text_color(page_sys_.weather_update, lv_color_hex(cfg::color::kTextDim), 0);
+                }
             }
             else
             {
@@ -1339,6 +1709,71 @@ void UiController::updateValues()
                               static_cast<unsigned long>(total_tenths / 10U),
                               static_cast<unsigned long>(total_tenths % 10U));
     }
+
+    if ((outdoor_page_enabled_) && (now_ms - last_outdoor_refresh_ms_ >= cfg::timing::kUiValuesRefreshMs))
+    {
+        last_outdoor_refresh_ms_ = now_ms;
+
+        WiFiManager &wifi = WiFiManager::instance();
+        const WeatherSnapshot weather = wifi.getSnapshot();
+        if (outdoor_page_enabled_ && weather.valid)
+        {
+            lv_label_set_text(page_outdoor_.weather_status, weatherConditionText(weather.weather_code));
+            lv_obj_set_style_text_color(page_outdoor_.weather_status, lv_color_hex(weatherConditionColor(weather.weather_code)), 0);
+
+            char temp_text[32] = {0};
+            if (isfinite(weather.temperature_c))
+            {
+                snprintf(temp_text, sizeof(temp_text), "%.1f C", weather.temperature_c);
+            }
+            else
+            {
+                snprintf(temp_text, sizeof(temp_text), "--");
+            }
+            lv_label_set_text(page_outdoor_.temp, temp_text);
+            lv_obj_set_style_text_color(page_outdoor_.temp, lv_color_hex(cfg::color::kValue), 0);
+
+            char humidity_text[32] = {0};
+            if (isfinite(weather.humidity_pct))
+            {
+                snprintf(humidity_text, sizeof(humidity_text), "%.0f%%", weather.humidity_pct);
+            }
+            else
+            {
+                snprintf(humidity_text, sizeof(humidity_text), "--%%");
+            }
+            lv_label_set_text(page_outdoor_.humidity, humidity_text);
+            lv_obj_set_style_text_color(page_outdoor_.humidity, lv_color_hex(cfg::color::kValue), 0);
+
+            if (weather.forecast_time[0] != '\0')
+            {
+                lv_label_set_text(page_outdoor_.datetime, weather.forecast_time);
+                lv_obj_set_style_text_color(page_outdoor_.datetime, lv_color_hex(cfg::color::kValue), 0);
+            }
+            else
+            {
+                lv_label_set_text(page_outdoor_.datetime, "--:--");
+                lv_obj_set_style_text_color(page_outdoor_.datetime, lv_color_hex(cfg::color::kTextDim), 0);
+            }
+
+            char rain_text[16] = {0};
+            uint8_t rain_pct = static_cast<uint8_t>(weather.precipitation_mm * 100.0f);
+            snprintf(rain_text, sizeof(rain_text), "%u%%", rain_pct);
+            lv_label_set_text(page_outdoor_.rain, rain_text);
+            lv_obj_set_style_text_color(page_outdoor_.rain, lv_color_hex(rainProbabilityColor(weather.precipitation_mm)), 0);
+
+            char cloud_text[16] = {0};
+            snprintf(cloud_text, sizeof(cloud_text), "%u%%", weather.cloud_coverage_pct);
+            lv_label_set_text(page_outdoor_.clouds, cloud_text);
+            lv_obj_set_style_text_color(page_outdoor_.clouds, lv_color_hex(cfg::color::kValue), 0);
+
+            if (weather.weather_desc[0] != '\0')
+            {
+                lv_label_set_text(page_outdoor_.weather_status, weather.weather_desc);
+                lv_obj_set_style_text_color(page_outdoor_.weather_status, lv_color_hex(cfg::color::kValue), 0);
+            }
+        }
+    }
 }
 
 void UiController::taskEntry(void *parameter)
@@ -1376,6 +1811,40 @@ void UiController::taskLoop()
 
         if (display_awake)
         {
+            const uint32_t now_ms = millis();
+            bool wifi_connected = false;
+            if (WiFiManager::instance().isInitialized())
+            {
+                wifi_connected = WiFiManager::instance().isConnected();
+            }
+
+            if (wifi_connected != outdoor_page_enabled_)
+            {
+                outdoor_page_enabled_ = wifi_connected;
+                const uint8_t max_page = outdoor_page_enabled_ ? 3U : 2U;
+
+                if (current_page_ > max_page)
+                {
+                    current_page_ = 0;
+                }
+
+                for (uint8_t i = 0; i < 4U; ++i)
+                {
+                    if (pages_[i] == nullptr)
+                    {
+                        continue;
+                    }
+                    if (i == current_page_)
+                    {
+                        lv_obj_clear_flag(pages_[i], LV_OBJ_FLAG_HIDDEN);
+                    }
+                    else
+                    {
+                        lv_obj_add_flag(pages_[i], LV_OBJ_FLAG_HIDDEN);
+                    }
+                }
+            }
+
             updateValues();
         }
         else

@@ -14,6 +14,19 @@ WiFiManager &WiFiManager::instance()
     return manager;
 }
 
+int32_t WiFiManager::clampI32(int32_t value, int32_t low, int32_t high) const
+{
+    if (value < low)
+    {
+        return low;
+    }
+    if (value > high)
+    {
+        return high;
+    }
+    return value;
+}
+
 void WiFiManager::ensureTimeSync()
 {
     const uint32_t now_ms = millis();
@@ -142,7 +155,6 @@ bool WiFiManager::parseNumberAfterKey(const String &src, const char *key, float 
             }
         }
 
-        // Continue search to handle duplicate keys where earlier occurrence is non-numeric.
         search_from = key_pos + 1;
     }
 
@@ -151,27 +163,111 @@ bool WiFiManager::parseNumberAfterKey(const String &src, const char *key, float 
 
 bool WiFiManager::parseWeatherPayload(const String &payload, WeatherSnapshot &snapshot) const
 {
-    float pressure = NAN;
-
-    bool ok_pressure = parseNumberAfterKey(payload, "\"pressure_msl\"", pressure);
-    if (!ok_pressure)
+    const int cuaca_start = payload.indexOf("\"cuaca\"");
+    if (cuaca_start < 0)
     {
-        // Backward-compatible fallback for payload variants exposing current surface_pressure.
-        ok_pressure = parseNumberAfterKey(payload, "\"surface_pressure\"", pressure);
+        return false;
     }
 
-    if (!ok_pressure)
+    const int array_start = payload.indexOf("[", cuaca_start);
+    const int array_end = payload.indexOf("]", array_start);
+    if (array_start < 0 || array_end < 0)
+    {
+        return false;
+    }
+
+    String cuaca_block = payload.substring(array_start + 1, array_end);
+    const int obj_start = cuaca_block.indexOf("{");
+    const int obj_end = cuaca_block.indexOf("}");
+    if (obj_start < 0 || obj_end < 0)
+    {
+        return false;
+    }
+
+    String first_obj = cuaca_block.substring(obj_start, obj_end + 1);
+
+    float temp = NAN;
+    parseNumberAfterKey(first_obj, "\"t\":", temp);
+    if (!isfinite(temp))
+    {
+        parseNumberAfterKey(first_obj, "\"t\":", temp);
+    }
+
+    float humidity = NAN;
+    parseNumberAfterKey(first_obj, "\"hu\":", humidity);
+
+    float cloud_cov = NAN;
+    parseNumberAfterKey(first_obj, "\"tcc\":", cloud_cov);
+    uint8_t cloud_pct = 0;
+    if (isfinite(cloud_cov))
+    {
+        cloud_pct = static_cast<uint8_t>(clampI32(static_cast<int32_t>(cloud_cov), 0, 100));
+    }
+
+    float precip = 0.0f;
+    parseNumberAfterKey(first_obj, "\"tp\":", precip);
+
+    uint8_t code = 0;
+    float wcode = 0.0f;
+    if (parseNumberAfterKey(first_obj, "\"weather\":", wcode))
+    {
+        code = static_cast<uint8_t>(clampI32(static_cast<int32_t>(wcode), 0, 99));
+    }
+
+    char weather_desc[32] = {0};
+    const int desc_start = first_obj.indexOf("\"weather_desc\":\"");
+    if (desc_start >= 0)
+    {
+        int desc_startq = desc_start + 16;
+        int desc_endq = first_obj.indexOf("\"", desc_startq);
+        if (desc_endq > desc_startq)
+        {
+            String desc = first_obj.substring(desc_startq, desc_endq);
+            strncpy(weather_desc, desc.c_str(), sizeof(weather_desc) - 1);
+        }
+    }
+
+    char local_dt[24] = {0};
+    const int dt_start = first_obj.indexOf("\"local_datetime\":\"");
+    if (dt_start >= 0)
+    {
+        int dt_startq = dt_start + 18;
+        int dt_endq = first_obj.indexOf("\"", dt_startq);
+        if (dt_endq > dt_startq)
+        {
+            String dt = first_obj.substring(dt_startq, dt_endq);
+            strncpy(local_dt, dt.c_str(), sizeof(local_dt) - 1);
+
+            int space_idx = dt.lastIndexOf(' ');
+            if (space_idx > 0)
+            {
+                String time_str = dt.substring(space_idx + 1);
+                if (time_str.length() >= 5)
+                {
+                    strncpy(snapshot.forecast_time, time_str.substring(0, 5).c_str(), sizeof(snapshot.forecast_time) - 1);
+                }
+            }
+        }
+    }
+
+    if (!isfinite(temp))
     {
         return false;
     }
 
     snapshot.valid = true;
-    snapshot.surface_pressure_hpa = pressure;
+    snapshot.temperature_c = temp;
+    snapshot.humidity_pct = humidity;
+    snapshot.precipitation_mm = precip;
+    snapshot.cloud_coverage_pct = cloud_pct;
+    snapshot.weather_code = code;
+    strncpy(snapshot.weather_desc, weather_desc, sizeof(snapshot.weather_desc) - 1);
+    strncpy(snapshot.local_datetime, local_dt, sizeof(snapshot.local_datetime) - 1);
     snapshot.last_update_ms = millis();
     return true;
 }
 
-bool WiFiManager::fetchOpenMeteo()
+bool WiFiManager::fetchBmkg()
 {
     if (WiFi.status() != WL_CONNECTED)
     {
@@ -180,13 +276,8 @@ bool WiFiManager::fetchOpenMeteo()
     }
 
     String url;
-    url.reserve(256);
-    url += "https://api.open-meteo.com/v1/forecast?latitude=";
-    url += String(cfg::wifi::kLatitudeDefault, 4);
-    url += "&longitude=";
-    url += String(cfg::wifi::kLongitudeDefault, 4);
-    url += "&hourly=pressure_msl";
-    url += "&forecast_days=1";
+    url.reserve(384);
+    url = "https://api.bmkg.go.id/publik/prakiraan-cuaca?adm4=32.73.14.1002";
 
     WiFiClientSecure secure_client;
     secure_client.setInsecure();
@@ -199,11 +290,11 @@ bool WiFiManager::fetchOpenMeteo()
         return false;
     }
 
-    const int code = http.GET();
-    if (code != HTTP_CODE_OK)
+    const int http_code = http.GET();
+    if (http_code != HTTP_CODE_OK)
     {
         http.end();
-        setFetchError(FetchError::HttpStatusFailed, code);
+        setFetchError(FetchError::HttpStatusFailed, http_code);
         return false;
     }
 
@@ -222,12 +313,6 @@ bool WiFiManager::fetchOpenMeteo()
         return false;
     }
 
-    if ((snapshot.surface_pressure_hpa < cfg::sensor::kSeaLevelMinHpa) || (snapshot.surface_pressure_hpa > cfg::sensor::kSeaLevelMaxHpa))
-    {
-        setFetchError(FetchError::PressureOutOfRange);
-        return false;
-    }
-
     if ((mutex_ == nullptr) || (xSemaphoreTake(mutex_, pdMS_TO_TICKS(60)) != pdTRUE))
     {
         setFetchError(FetchError::MutexTimeout);
@@ -235,10 +320,6 @@ bool WiFiManager::fetchOpenMeteo()
     }
 
     snapshot_ = snapshot;
-    if (WiFi.status() == WL_CONNECTED)
-    {
-        ensureTimeSync();
-    }
     const time_t now_epoch = time(nullptr);
     if (now_epoch > 1700000000)
     {
@@ -250,7 +331,7 @@ bool WiFiManager::fetchOpenMeteo()
     }
     last_fetch_ms_ = snapshot.last_update_ms;
     last_fetch_error_ = FetchError::None;
-    last_http_status_code_ = HTTP_CODE_OK;
+    last_http_status_code_ = http_code;
     xSemaphoreGive(mutex_);
     return true;
 }
@@ -326,7 +407,7 @@ bool WiFiManager::forceFetchNow()
         return false;
     }
 
-    const bool ok = fetchOpenMeteo();
+    const bool ok = fetchBmkg();
     setRuntimeState(ok ? State::Online : State::ReconnectAttempts,
                     WiFi.status() == WL_CONNECTED,
                     ok,
@@ -431,8 +512,11 @@ void WiFiManager::printStatus(Stream &out) const
     if (snapshot.valid)
     {
         const uint32_t age_ms = (snapshot.last_update_ms == 0U) ? UINT32_MAX : (millis() - snapshot.last_update_ms);
-        out.printf("[WEATHER] surface_pressure=%.2f hPa age=%lu ms\n",
-                   snapshot.surface_pressure_hpa,
+        out.printf("[WEATHER] temp=%.1fC humidity=%.0f%% clouds=%u%% desc=%s age=%lu ms\n",
+                   snapshot.temperature_c,
+                   snapshot.humidity_pct,
+                   snapshot.cloud_coverage_pct,
+                   snapshot.weather_desc[0] ? snapshot.weather_desc : "n/a",
                    static_cast<unsigned long>(age_ms));
     }
     else
@@ -488,7 +572,7 @@ void WiFiManager::taskLoop()
         case State::Connecting:
             if (connectWithTimeout(cfg::wifi::kConnectTimeoutMs))
             {
-                const bool weather_ok = fetchOpenMeteo();
+                const bool weather_ok = fetchBmkg();
                 setRuntimeState(State::Online, true, weather_ok, 0);
             }
             else
@@ -519,7 +603,7 @@ void WiFiManager::taskLoop()
 
             if ((last_fetch_ms == 0U) || (now_ms - last_fetch_ms >= cfg::wifi::kWeatherRefreshMs))
             {
-                const bool weather_ok = fetchOpenMeteo();
+                const bool weather_ok = fetchBmkg();
                 setRuntimeState(State::Online, true, weather_ok, reconnect_attempts);
             }
             break;
@@ -527,7 +611,7 @@ void WiFiManager::taskLoop()
         case State::ReconnectAttempts:
             if (connected_now)
             {
-                const bool weather_ok = fetchOpenMeteo();
+                const bool weather_ok = fetchBmkg();
                 setRuntimeState(State::Online, true, weather_ok, 0);
                 break;
             }
@@ -546,7 +630,7 @@ void WiFiManager::taskLoop()
 
                 if (ok)
                 {
-                    const bool weather_ok = fetchOpenMeteo();
+                    const bool weather_ok = fetchBmkg();
                     setRuntimeState(State::Online, true, weather_ok, 0);
                 }
                 else if (reconnect_attempts >= cfg::wifi::kReconnectMaxAttempts)
