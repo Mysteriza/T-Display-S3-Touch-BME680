@@ -1061,8 +1061,6 @@ void UiController::buildPageOutdoors(lv_obj_t *parent)
     lv_obj_set_style_text_font(page_outdoor_.no_wifi, &lv_font_montserrat_14, 0);
     lv_obj_align(page_outdoor_.no_wifi, LV_ALIGN_CENTER, 0, 0);
 
-    page_outdoor_.datetime = lv_label_create(parent);
-    page_outdoor_.weather_status = lv_label_create(parent);
     const lv_coord_t card_w = 148;
     const lv_coord_t card_h = 34;
     const lv_coord_t left_x = cfg::display::kMarginLeft;
