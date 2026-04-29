@@ -2,8 +2,6 @@
 
 Environmental monitor firmware for LilyGO T-Display-S3 + BME680/BME688 with Bosch BSEC2 and optional WiFi weather context.
 
-This README explains how the system works and the meaning of every number on the screen based on the current code implementation, so users do not need to read the source code.
-
 ## Design Prototype
 
 ![UI Design Prototype](UI%20Design%20Prototype.png)
