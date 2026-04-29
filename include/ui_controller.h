@@ -107,7 +107,10 @@ private:
 
     lv_obj_t *createHeader(lv_obj_t *parent, const char *page_info, uint8_t page_index);
     lv_obj_t *createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
-                              const char *title, lv_obj_t **value_label, const lv_font_t *value_font);
+                              const char *title, lv_obj_t **value_label, const lv_font_t *value_font,
+                              const lv_font_t *title_font = nullptr);
+    lv_obj_t *createSingleLineCard(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
+                                   const char *text, lv_obj_t **text_label, const lv_font_t *text_font);
 
     void setPage(uint8_t page_index);
     void updateValues();

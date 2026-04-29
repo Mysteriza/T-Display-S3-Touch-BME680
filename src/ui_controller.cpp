@@ -455,42 +455,21 @@ namespace
         return cfg::color::kTextDim;
     }
 
-    const char *rainProbabilityText(float precipitation_mm)
+    uint32_t rainAmountColor(float precipitation_mm)
     {
         if (!isfinite(precipitation_mm) || precipitation_mm < 0.0f)
         {
-            return "0%";
+            return cfg::color::kTextDim;
         }
-        if (precipitation_mm < 0.1f)
-        {
-            return "<1%";
-        }
-        if (precipitation_mm < 2.5f)
-        {
-            return "Low";
-        }
-        if (precipitation_mm < 7.5f)
-        {
-            return "Med";
-        }
-        return "High";
-    }
-
-    uint32_t rainProbabilityColor(float precipitation_mm)
-    {
-        if (!isfinite(precipitation_mm) || precipitation_mm < 0.0f)
+        if (precipitation_mm <= 0.0f)
         {
             return cfg::color::kStatusOk;
         }
-        if (precipitation_mm < 0.1f)
-        {
-            return cfg::color::kStatusOk;
-        }
-        if (precipitation_mm < 2.5f)
+        if (precipitation_mm < 1.0f)
         {
             return cfg::color::kBootChecking;
         }
-        if (precipitation_mm < 7.5f)
+        if (precipitation_mm < 5.0f)
         {
             return 0xFF8C32;
         }
@@ -883,7 +862,8 @@ lv_obj_t *UiController::createHeader(lv_obj_t *parent, const char *page_info, ui
 }
 
 lv_obj_t *UiController::createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
-                                        const char *title, lv_obj_t **value_label, const lv_font_t *value_font)
+                                        const char *title, lv_obj_t **value_label, const lv_font_t *value_font,
+                                        const lv_font_t *title_font)
 {
     lv_obj_t *card = lv_obj_create(parent);
     lv_obj_set_size(card, w, h);
@@ -898,6 +878,10 @@ lv_obj_t *UiController::createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord
     lv_obj_t *title_label = lv_label_create(card);
     lv_label_set_text(title_label, title);
     lv_obj_set_style_text_color(title_label, lv_color_hex(cfg::color::kTextDim), 0);
+    if (title_font != nullptr)
+    {
+        lv_obj_set_style_text_font(title_label, title_font, 0);
+    }
     lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
     *value_label = lv_label_create(card);
@@ -905,6 +889,31 @@ lv_obj_t *UiController::createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord
     lv_obj_set_style_text_color(*value_label, lv_color_hex(cfg::color::kValue), 0);
     lv_obj_set_style_text_font(*value_label, value_font, 0);
     lv_obj_align(*value_label, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+
+    return card;
+}
+
+lv_obj_t *UiController::createSingleLineCard(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
+                                             const char *text, lv_obj_t **text_label, const lv_font_t *text_font)
+{
+    lv_obj_t *card = lv_obj_create(parent);
+    lv_obj_set_size(card, w, h);
+    lv_obj_set_pos(card, x, y);
+    lv_obj_set_style_bg_color(card, lv_color_hex(cfg::color::kCardBackground), 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(cfg::color::kBorder), 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, 12, 0);
+    lv_obj_set_style_pad_left(card, 8, 0);
+    lv_obj_set_style_pad_right(card, 8, 0);
+    lv_obj_set_style_pad_top(card, 6, 0);
+    lv_obj_set_style_pad_bottom(card, 6, 0);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    *text_label = lv_label_create(card);
+    lv_label_set_text(*text_label, text);
+    lv_obj_set_style_text_color(*text_label, lv_color_hex(cfg::color::kValue), 0);
+    lv_obj_set_style_text_font(*text_label, text_font, 0);
+    lv_obj_align(*text_label, LV_ALIGN_LEFT_MID, 0, 0);
 
     return card;
 }
@@ -1054,77 +1063,68 @@ void UiController::buildPageOutdoors(lv_obj_t *parent)
 
     page_outdoor_.datetime = lv_label_create(parent);
     page_outdoor_.weather_status = lv_label_create(parent);
-    page_outdoor_.temp = lv_label_create(parent);
-    page_outdoor_.humidity = lv_label_create(parent);
-    page_outdoor_.rain = lv_label_create(parent);
-    page_outdoor_.clouds = lv_label_create(parent);
-
-    const lv_coord_t card_w = 94;
-    const lv_coord_t card_h = 48;
+    const lv_coord_t card_w = 148;
+    const lv_coord_t card_h = 34;
     const lv_coord_t left_x = cfg::display::kMarginLeft;
-    const lv_coord_t mid_x = left_x + card_w + 8;
-    const lv_coord_t right_x = mid_x + card_w + 8;
+    const lv_coord_t right_x = left_x + card_w + cfg::display::kCardGap;
     const lv_coord_t row0_y = 34;
     const lv_coord_t row1_y = 88;
-
-    lv_obj_t *time_card = createValueCard(parent,
-                                          left_x,
-                                          row0_y,
-                                          card_w,
-                                          card_h,
-                                          "TIME",
-                                          &page_outdoor_.datetime,
-                                          &lv_font_montserrat_12);
-    (void)time_card;
+    const lv_coord_t row2_y = 132;
 
     lv_obj_t *weather_card = createValueCard(parent,
-                                             mid_x,
+                                             left_x,
                                              row0_y,
-                                             card_w,
-                                             card_h,
+                                             cfg::display::kWidth - (cfg::display::kMarginLeft * 2),
+                                             46,
                                              "WEATHER",
                                              &page_outdoor_.weather_status,
-                                             &lv_font_montserrat_12);
+                                             &lv_font_montserrat_18);
     (void)weather_card;
 
-    lv_obj_t *temp_card = createValueCard(parent,
-                                          right_x,
-                                          row0_y,
-                                          card_w,
-                                          card_h,
-                                          "TEMP",
-                                          &page_outdoor_.temp,
-                                          &lv_font_montserrat_12);
+    page_outdoor_.datetime = lv_label_create(weather_card);
+    lv_label_set_text(page_outdoor_.datetime, "--:--");
+    lv_obj_set_style_text_font(page_outdoor_.datetime, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(page_outdoor_.datetime, lv_color_hex(cfg::color::kTextDim), 0);
+    lv_obj_align(page_outdoor_.datetime, LV_ALIGN_TOP_RIGHT, 0, 0);
+
+    lv_obj_t *temp_card = createSingleLineCard(parent,
+                                               left_x,
+                                               row1_y,
+                                               card_w,
+                                               card_h,
+                                               "Temp: -- C",
+                                               &page_outdoor_.temp,
+                                               &lv_font_montserrat_12);
     (void)temp_card;
 
-    lv_obj_t *humidity_card = createValueCard(parent,
-                                              left_x,
-                                              row1_y,
-                                              card_w,
-                                              card_h,
-                                              "HUMIDITY",
-                                              &page_outdoor_.humidity,
-                                              &lv_font_montserrat_12);
+    lv_obj_t *humidity_card = createSingleLineCard(parent,
+                                                   right_x,
+                                                   row1_y,
+                                                   card_w,
+                                                   card_h,
+                                                   "Hum: --%",
+                                                   &page_outdoor_.humidity,
+                                                   &lv_font_montserrat_12);
     (void)humidity_card;
 
-    lv_obj_t *rain_card = createValueCard(parent,
-                                          mid_x,
-                                          row1_y,
-                                          card_w,
-                                          card_h,
-                                          "RAIN PROBS",
-                                          &page_outdoor_.rain,
-                                          &lv_font_montserrat_12);
+    lv_obj_t *rain_card = createSingleLineCard(parent,
+                                               left_x,
+                                               row2_y,
+                                               card_w,
+                                               card_h,
+                                               "Rain: -- mm",
+                                               &page_outdoor_.rain,
+                                               &lv_font_montserrat_12);
     (void)rain_card;
 
-    lv_obj_t *clouds_card = createValueCard(parent,
-                                            right_x,
-                                            row1_y,
-                                            card_w,
-                                            card_h,
-                                            "CLOUDS",
-                                            &page_outdoor_.clouds,
-                                            &lv_font_montserrat_12);
+    lv_obj_t *clouds_card = createSingleLineCard(parent,
+                                                 right_x,
+                                                 row2_y,
+                                                 card_w,
+                                                 card_h,
+                                                 "Clouds: --%",
+                                                 &page_outdoor_.clouds,
+                                                 &lv_font_montserrat_12);
     (void)clouds_card;
 
     if (!wifi_connected)
@@ -1724,11 +1724,11 @@ void UiController::updateValues()
             char temp_text[32] = {0};
             if (isfinite(weather.temperature_c))
             {
-                snprintf(temp_text, sizeof(temp_text), "%.1f C", weather.temperature_c);
+                snprintf(temp_text, sizeof(temp_text), "Temp: %.1f C", weather.temperature_c);
             }
             else
             {
-                snprintf(temp_text, sizeof(temp_text), "--");
+                snprintf(temp_text, sizeof(temp_text), "Temp: -- C");
             }
             lv_label_set_text(page_outdoor_.temp, temp_text);
             lv_obj_set_style_text_color(page_outdoor_.temp, lv_color_hex(cfg::color::kValue), 0);
@@ -1736,11 +1736,11 @@ void UiController::updateValues()
             char humidity_text[32] = {0};
             if (isfinite(weather.humidity_pct))
             {
-                snprintf(humidity_text, sizeof(humidity_text), "%.0f%%", weather.humidity_pct);
+                snprintf(humidity_text, sizeof(humidity_text), "Hum: %.0f%%", weather.humidity_pct);
             }
             else
             {
-                snprintf(humidity_text, sizeof(humidity_text), "--%%");
+                snprintf(humidity_text, sizeof(humidity_text), "Hum: --%%");
             }
             lv_label_set_text(page_outdoor_.humidity, humidity_text);
             lv_obj_set_style_text_color(page_outdoor_.humidity, lv_color_hex(cfg::color::kValue), 0);
@@ -1757,13 +1757,12 @@ void UiController::updateValues()
             }
 
             char rain_text[16] = {0};
-            uint8_t rain_pct = static_cast<uint8_t>(weather.precipitation_mm * 100.0f);
-            snprintf(rain_text, sizeof(rain_text), "%u%%", rain_pct);
+            snprintf(rain_text, sizeof(rain_text), "Rain: %.1f mm", weather.precipitation_mm);
             lv_label_set_text(page_outdoor_.rain, rain_text);
-            lv_obj_set_style_text_color(page_outdoor_.rain, lv_color_hex(rainProbabilityColor(weather.precipitation_mm)), 0);
+            lv_obj_set_style_text_color(page_outdoor_.rain, lv_color_hex(rainAmountColor(weather.precipitation_mm)), 0);
 
             char cloud_text[16] = {0};
-            snprintf(cloud_text, sizeof(cloud_text), "%u%%", weather.cloud_coverage_pct);
+            snprintf(cloud_text, sizeof(cloud_text), "Clouds: %u%%", weather.cloud_coverage_pct);
             lv_label_set_text(page_outdoor_.clouds, cloud_text);
             lv_obj_set_style_text_color(page_outdoor_.clouds, lv_color_hex(cfg::color::kValue), 0);
 
