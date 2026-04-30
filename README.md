@@ -40,12 +40,8 @@ src/
 - **Real-time Environment Data**: Temperature, Humidity, Air Pressure, and calculated Altitude.
 - **Gas Monitoring (Page 02)**: Gas Resolution gauge, large Gas Status label, and 5-minute Gas Trend (Rising/Stable/Falling) computed against a rolling 30-second gas history baseline.
 - **System Telemetry**: UI task load estimate, Uptime counter, and Battery Percentage.
-- **Connectivity Detail (Page 03)**: WiFi status indicator (green connected / red offline), Last Fetch timestamp (`HH:MM:SS`, 24-hour WIB from internet time), CPU Load (%), and Storage.
-- **Outdoor Weather Page (Page 04)**: Automatically enabled when WiFi is connected; displays weather, temperature, humidity, rain amount, and cloud coverage as single-line card text so the label and value stay on one row without overlap. Weather keeps its current size, while Temp, Hum, Rain, and Clouds use slightly larger text for better readability.
-- **Online Weather Context**: BMKG weather API fetches weather summary every 10 minutes in online mode. If you need a different local provider or region, you can replace the endpoint and parser in `src/wifi_manager.cpp`.
 - **Power Optimization**: Background sensor processing with reduced screen redraws.
 - **Serial Diagnostics**: Built-in CLI for status checks and manual calibration.
-- **Extended Boot Self-Check**: Verifies display, touch, sensor init, fresh data, and WiFi boot state before entering runtime.
 - **Advanced Battery SOC Estimator (No Extra Hardware)**: Non-linear Li-ion OCV curve, load-compensated voltage recovery, dual-path filtering, and bounded-rate SOC fusion to reduce jumpy and misleading percentage output.
 
 ## Runtime Defaults
@@ -195,7 +191,6 @@ python3 -m esptool --chip esp32s3 --port /dev/ttyUSB0 --baud 460800 write_flash 
 
 Once flashed, the monitor will immediately boot up and begin calibrating the sensor. The touch screen can be used to navigate between logical pages:
 
-- **Swipe Left/Right** on the touch screen to move between Environment, Gas, System, and (if WiFi is connected) Outdoor page.
 - The UI will automatically hide after inactivity to preserve battery but will continue sampling in the background. Tap the screen or press the wake button to turn on the screen.
 - Page 02 focuses on gas-only diagnostics: Gauge, Status, and 5-minute Trend.
 - Page 03 includes WiFi mode, Last Fetch time (`HH:MM:SS`), CPU Load (%), and Storage.
@@ -252,5 +247,4 @@ Notes:
 
 - **Sensor not detected**: Check the SDA/SCL wiring and the 0x76/0x77 address configuration.
 - **Screen numbers flicker/disappear**: The firmware pauses data publishing when I2C is unstable to prevent flickering. Provide better power or check connections.
-- **WiFi remains offline**: Verify SSID/password in `include/config.h`, signal strength, and internet access.
 - **Boot self-check shows temporary data fail**: Keep device powered for initial warm-up; firmware waits up to 15 seconds for fresh pipeline data.

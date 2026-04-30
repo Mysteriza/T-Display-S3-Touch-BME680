@@ -61,8 +61,6 @@ namespace cfg
 
         inline constexpr uint32_t kCpuLoadRefreshMs = 3000UL;
         inline constexpr uint32_t kSysInfoRefreshMs = 30000UL;
-        inline constexpr uint32_t kWifiStatusRefreshMs = 5000UL;
-        inline constexpr uint32_t kLastFetchLabelRefreshMs = 30000UL;
         // Page data refresh policy: do not update too frequently.
         inline constexpr uint32_t kUiValuesRefreshMs = 30000UL;
         inline constexpr uint32_t kUptimeRefreshMs = 1000UL;
@@ -70,17 +68,18 @@ namespace cfg
 
     namespace display
     {
-        inline constexpr int kRotation = 3;
-        inline constexpr int kWidth = 320;
-        inline constexpr int kHeight = 170;
+        inline constexpr int kRotation = 0;
+        inline constexpr int kWidth = 170;
+        inline constexpr int kHeight = 320;
 
-        inline constexpr int kCardWidth = 148;
-        inline constexpr int kCardHeight = 58;
+        inline constexpr int kCardWidth = 154;
+        inline constexpr int kCardHeight = 70;
         inline constexpr int kCardGap = 8;
-        inline constexpr int kCardStartY = 30;
-        inline constexpr int kCardSecondRowY = 94;
-        inline constexpr int kSysCardY = 98;
-        inline constexpr int kSysCardHeight = 64;
+        inline constexpr int kCardStartY = 35;
+        inline constexpr int kCardSecondRowY = 113;
+        inline constexpr int kCardThirdRowY = 191;
+        inline constexpr int kSysCardY = 35;
+        inline constexpr int kSysCardHeight = 90;
 
         inline constexpr int kMarginLeft = 8;
         inline constexpr int kMarginRight = 8;
@@ -142,19 +141,6 @@ namespace cfg
         inline constexpr float kGasGaugeMaxKohm = 200.0f;
     }
 
-    namespace wifi
-    {
-        inline constexpr uint32_t kTaskDelayMs = 500UL;
-        inline constexpr uint32_t kBootConnectWindowMs = 15000UL;
-        inline constexpr uint32_t kConnectTimeoutMs = 20000UL;
-        inline constexpr uint32_t kReconnectIntervalMs = 30000UL;
-        inline constexpr uint8_t kReconnectMaxAttempts = 3;
-        inline constexpr uint32_t kWeatherRefreshMs = 60UL * 60UL * 1000UL; // 1 Hour
-        inline constexpr uint32_t kWeatherHttpTimeoutMs = 8000UL;
-
-        inline constexpr const char *kSsid = "Kosan bu nata";
-        inline constexpr const char *kPassword = "immodium";
-    }
 
     namespace color
     {

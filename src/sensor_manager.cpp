@@ -8,7 +8,6 @@
 
 #include "config.h"
 #include "i2c_bus_lock.h"
-#include "wifi_manager.h"
 
 namespace
 {
@@ -888,9 +887,7 @@ void SensorManager::printHelp(Stream &out) const
     out.println("[CMD] sensor reinit            -> force BME680/BSEC reinit");
     out.println("[CMD] i2c scan                 -> run quick main/alt I2C scan now");
     out.println("[CMD] debug detail on|off      -> force detailed debug output");
-    out.println("[CMD] wifi status              -> show WiFi/weather runtime status");
     out.println("[CMD] weather status           -> show weather snapshot and age");
-    out.println("[CMD] weather fetch now        -> trigger immediate Open-Meteo fetch");
 }
 
 void SensorManager::scanI2CBuses(Stream &out)

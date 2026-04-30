@@ -6,7 +6,6 @@
 #include "serial_cli.h"
 #include "sensor_manager.h"
 #include "ui_controller.h"
-#include "wifi_manager.h"
 
 namespace
 {
@@ -47,20 +46,6 @@ namespace
     return result;
   }
 
-  bool waitForBootWifiConnection(WiFiManager &wifi_manager)
-  {
-    const uint32_t start_ms = millis();
-    while (millis() - start_ms < cfg::wifi::kBootConnectWindowMs)
-    {
-      if (wifi_manager.isConnected())
-      {
-        return true;
-      }
-      delay(120);
-    }
-    return wifi_manager.isConnected();
-  }
-
   void printBootReadinessChecklist(const BootDiagStatus &boot_status, SensorManager &sensor_manager)
   {
     const SensorData snapshot = sensor_manager.getData();
@@ -81,7 +66,6 @@ namespace
     Serial.printf("[BOOT]  Sensor init .. %s\n", boot_status.sensor_ok ? "OK" : "FAIL");
     Serial.printf("[BOOT]  Gas Data ..... %s\n", (boot_status.data_ok && data_fresh) ? "OK" : "FAIL");
     Serial.printf("[BOOT]  Gas data ..... %s\n", gas_valid ? "OK" : "FAIL");
-    Serial.printf("[BOOT]  WiFi boot .... %s\n", boot_status.wifi_ok ? "OK" : "OFFLINE");
     Serial.printf("[BOOT]  Verdict ...... %s\n", ready ? "READY" : "DEGRADED");
 
     if (!boot_status.data_ok)
@@ -108,7 +92,6 @@ void setup()
 
   UiController &ui = UiController::instance();
   SensorManager &sensor_manager = SensorManager::instance();
-  WiFiManager &wifi_manager = WiFiManager::instance();
 
   BootDiagStatus boot_status{};
 
@@ -125,23 +108,10 @@ void setup()
   boot_status.sensor_ok = sensor_manager.init();
   ui.bootDiagUpdate(boot_status);
 
-  wifi_manager.init();
-  boot_status.wifi_done = true;
-  boot_status.wifi_ok = false;
-  ui.bootDiagUpdate(boot_status);
 
   TaskHandle_t sensor_task_handle = nullptr;
   xTaskCreatePinnedToCore(SensorManager::taskEntry, "sensorTask", 8192, &sensor_manager, 2, &sensor_task_handle, 0);
-  TaskHandle_t wifi_task_handle = nullptr;
-  xTaskCreatePinnedToCore(WiFiManager::taskEntry, "wifiTask", 8192, &wifi_manager, 1, &wifi_task_handle, 0);
 
-  boot_status.wifi_ok = waitForBootWifiConnection(wifi_manager);
-  if (boot_status.wifi_ok)
-  {
-    // Enforce one immediate fetch on successful boot connection.
-    wifi_manager.forceFetchNow();
-  }
-  ui.bootDiagUpdate(boot_status);
 
   if (boot_status.sensor_ok)
   {
@@ -155,7 +125,6 @@ void setup()
     boot_status.data_ok = false;
   }
 
-  boot_status.wifi_ok = wifi_manager.isConnected();
 
   printBootReadinessChecklist(boot_status, sensor_manager);
 

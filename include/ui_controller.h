@@ -18,8 +18,6 @@ struct BootDiagStatus
     bool sensor_ok = false;
     bool data_done = false;
     bool data_ok = false;
-    bool wifi_done = false;
-    bool wifi_ok = false;
 };
 
 struct BootItem
@@ -77,20 +75,8 @@ private:
         lv_obj_t *uptime = nullptr;
         lv_obj_t *cpu_load = nullptr;
         lv_obj_t *storage = nullptr;
-        lv_obj_t *wifi_status = nullptr;
-        lv_obj_t *weather_update = nullptr;
     };
 
-    struct PageOutdoorData
-    {
-        lv_obj_t *no_wifi = nullptr;
-        lv_obj_t *datetime = nullptr;
-        lv_obj_t *weather_status = nullptr;
-        lv_obj_t *temp = nullptr;
-        lv_obj_t *humidity = nullptr;
-        lv_obj_t *rain = nullptr;
-        lv_obj_t *clouds = nullptr;
-    };
 
     static void displayFlushCallback(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p);
     static void touchReadCallback(lv_indev_drv_t *drv, lv_indev_data_t *data);
@@ -103,7 +89,6 @@ private:
     void buildPageEnv(lv_obj_t *parent);
     void buildPageAqi(lv_obj_t *parent);
     void buildPageSys(lv_obj_t *parent);
-    void buildPageOutdoors(lv_obj_t *parent);
 
     lv_obj_t *createHeader(lv_obj_t *parent, const char *page_info, uint8_t page_index);
     lv_obj_t *createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
@@ -152,23 +137,21 @@ private:
     lv_obj_t *boot_title_ = nullptr;
     lv_obj_t *boot_subtitle_ = nullptr;
     lv_obj_t *boot_version_ = nullptr;
-    BootItem boot_items_[5] = {};
+    BootItem boot_items_[4] = {};
     uint8_t boot_current_item_ = 0;
     bool boot_animating_ = false;
     uint8_t boot_animation_step_ = 0;
     uint32_t boot_last_anim_ms_ = 0;
 
-    lv_obj_t *pages_[4] = {nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t *env_headers_[4] = {nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t *battery_labels_[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t *pages_[3] = {nullptr, nullptr, nullptr};
+    lv_obj_t *env_headers_[3] = {nullptr, nullptr, nullptr};
+    lv_obj_t *battery_labels_[3] = {nullptr, nullptr, nullptr};
 
     uint8_t current_page_ = 0;
 
     PageEnvData page_env_{};
     PageAqiData page_aqi_{};
     PageSysData page_sys_{};
-    PageOutdoorData page_outdoor_{};
-    bool outdoor_page_enabled_ = false;
 
     esp_adc_cal_characteristics_t battery_adc_chars_{};
     bool battery_adc_ready_ = false;
@@ -189,10 +172,7 @@ private:
     uint32_t last_uptime_refresh_ms_ = 0;
     uint32_t last_cpu_refresh_ms_ = 0;
     uint32_t last_sys_info_refresh_ms_ = 0;
-    uint32_t last_wifi_status_refresh_ms_ = 0;
-    uint32_t last_fetch_label_refresh_ms_ = 0;
     uint32_t last_bg_ui_refresh_ms_ = 0;
-    uint32_t last_outdoor_refresh_ms_ = 0;
 
     float cpu_load_estimate_pct_ = 0.0f;
 };
