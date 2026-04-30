@@ -4,7 +4,7 @@ Environmental monitor firmware for LilyGO T-Display-S3 + BME680/BME688 with Bosc
 
 ## Design Prototype
 
-![UI Design Prototype](UI%20Design%20Prototype.png)
+![UI Design Prototype](UI-Design-Prototype.png)
 
 ## Flow & Architecture
 

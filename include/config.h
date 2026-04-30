@@ -73,11 +73,12 @@ namespace cfg
         inline constexpr int kHeight = 320;
 
         inline constexpr int kCardWidth = 154;
-        inline constexpr int kCardHeight = 70;
+        inline constexpr int kCardHeight = 60;
         inline constexpr int kCardGap = 8;
-        inline constexpr int kCardStartY = 35;
-        inline constexpr int kCardSecondRowY = 113;
-        inline constexpr int kCardThirdRowY = 191;
+        inline constexpr int kCardStartY = 28;
+        inline constexpr int kCardSecondRowY = 96;
+        inline constexpr int kCardThirdRowY = 164;
+        inline constexpr int kCardFourthRowY = 232;
         inline constexpr int kSysCardY = 35;
         inline constexpr int kSysCardHeight = 90;
 
