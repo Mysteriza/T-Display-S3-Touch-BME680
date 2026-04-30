@@ -898,6 +898,13 @@ lv_obj_t *UiController::createSingleLineCard(lv_obj_t *parent, lv_coord_t x, lv_
 
 void UiController::buildPageEnv(lv_obj_t *parent)
 {
+    // Top-left "°ENVIRONMENT" label
+    lv_obj_t *page_title = lv_label_create(parent);
+    lv_label_set_text(page_title, "°ENVIRONMENT");
+    lv_obj_set_style_text_color(page_title, lv_color_hex(cfg::color::kValue), 0);
+    lv_obj_set_style_text_font(page_title, &lv_font_montserrat_14, 0);
+    lv_obj_align(page_title, LV_ALIGN_TOP_LEFT, cfg::display::kMarginLeft, 8);
+
     createHeader(parent, "01 / ENV", 0);
 
     battery_labels_[0] = lv_label_create(parent);
@@ -927,6 +934,13 @@ void UiController::buildPageEnv(lv_obj_t *parent)
 
 void UiController::buildPageAqi(lv_obj_t *parent)
 {
+    // Top-left "°ENVIRONMENT" label
+    lv_obj_t *page_title = lv_label_create(parent);
+    lv_label_set_text(page_title, "°ENVIRONMENT");
+    lv_obj_set_style_text_color(page_title, lv_color_hex(cfg::color::kValue), 0);
+    lv_obj_set_style_text_font(page_title, &lv_font_montserrat_14, 0);
+    lv_obj_align(page_title, LV_ALIGN_TOP_LEFT, cfg::display::kMarginLeft, 8);
+
     createHeader(parent, "02 / GAS", 1);
 
     battery_labels_[1] = lv_label_create(parent);
@@ -980,6 +994,13 @@ void UiController::buildPageAqi(lv_obj_t *parent)
 
 void UiController::buildPageSys(lv_obj_t *parent)
 {
+    // Top-left "°ENVIRONMENT" label
+    lv_obj_t *page_title = lv_label_create(parent);
+    lv_label_set_text(page_title, "°ENVIRONMENT");
+    lv_obj_set_style_text_color(page_title, lv_color_hex(cfg::color::kValue), 0);
+    lv_obj_set_style_text_font(page_title, &lv_font_montserrat_14, 0);
+    lv_obj_align(page_title, LV_ALIGN_TOP_LEFT, cfg::display::kMarginLeft, 8);
+
     createHeader(parent, "03 / SYSTEM", 2);
 
     battery_labels_[2] = lv_label_create(parent);
@@ -1146,13 +1167,16 @@ void UiController::onGesture(lv_event_t *event)
     }
 
     const lv_dir_t direction = lv_indev_get_gesture_dir(indev);
+    // Vertical swipes: LV_DIR_TOP = swipe up, LV_DIR_BOTTOM = swipe down
     if (direction == LV_DIR_TOP)
     {
+        // Swipe up = next page
         const uint8_t max_page = 2U;
         setPage((current_page_ + 1U) % (max_page + 1U));
     }
     else if (direction == LV_DIR_BOTTOM)
     {
+        // Swipe down = previous page
         const uint8_t max_page = 2U;
         setPage((current_page_ + max_page) % (max_page + 1U));
     }
