@@ -21,10 +21,7 @@ struct BootDiagStatus
 struct BootItem
 {
     lv_obj_t *label = nullptr;
-    lv_obj_t *icon = nullptr;
     const char *name = nullptr;
-    bool done = false;
-    bool ok = false;
 };
 
 class UiController
@@ -113,7 +110,6 @@ private:
     int32_t clampI32(int32_t value, int32_t low, int32_t high) const;
     int32_t roundToInt(float value) const;
 
-    void setBootLine(lv_obj_t *label, const char *name, bool done, bool ok);
     void updateEnvStatusLabels();
 
 private:
@@ -136,6 +132,8 @@ private:
     lv_obj_t *boot_title_ = nullptr;
     lv_obj_t *boot_subtitle_ = nullptr;
     lv_obj_t *boot_version_ = nullptr;
+    lv_obj_t *boot_progress_bar_ = nullptr;
+    lv_obj_t *boot_percent_label_ = nullptr;
     BootItem boot_items_[3] = {};
 
     lv_obj_t *pages_[3] = {nullptr, nullptr, nullptr};

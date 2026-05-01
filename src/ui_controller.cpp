@@ -616,47 +616,6 @@ bool UiController::initTouch()
     return true;
 }
 
-void UiController::setBootLine(lv_obj_t *label, const char *name, bool done, bool ok)
-{
-    if (label == nullptr)
-    {
-        return;
-    }
-
-    bool wifi_line = false;
-    if (name != nullptr)
-    {
-        wifi_line = (strcmp(name, "WiFi Boot") == 0);
-    }
-
-    uint32_t status_color = cfg::color::kBootChecking;
-    const char *status_text = "[...]";
-    if (done)
-    {
-        if (ok)
-        {
-            status_color = cfg::color::kStatusOk;
-            status_text = "[OK]";
-        }
-        else if (wifi_line)
-        {
-            status_color = cfg::color::kBootChecking;
-            status_text = "[OFFLINE]";
-        }
-        else
-        {
-            status_color = cfg::color::kError;
-            status_text = "[FAIL]";
-        }
-    }
-
-    char line[96] = {0};
-    snprintf(line, sizeof(line), "%-12s %s", name, status_text);
-    lv_label_set_recolor(label, false);
-    lv_obj_set_style_text_color(label, lv_color_hex(status_color), 0);
-    lv_label_set_text(label, line);
-}
-
 void UiController::bootDiagBegin()
 {
     if (!lvgl_ready_)
@@ -686,36 +645,38 @@ void UiController::bootDiagBegin()
     const lv_coord_t step = 18;
 
     boot_items_[0].label = lv_label_create(screen);
-    boot_items_[0].icon = lv_label_create(screen);
     boot_items_[0].name = "LCD";
-    boot_items_[0].done = false;
-    boot_items_[0].ok = false;
 
     boot_items_[1].label = lv_label_create(screen);
-    boot_items_[1].icon = lv_label_create(screen);
     boot_items_[1].name = "Touch";
-    boot_items_[1].done = false;
-    boot_items_[1].ok = false;
 
     boot_items_[2].label = lv_label_create(screen);
-    boot_items_[2].icon = lv_label_create(screen);
     boot_items_[2].name = "Sensor";
-    boot_items_[2].done = false;
-    boot_items_[2].ok = false;
 
     for (uint8_t i = 0; i < 3U; ++i)
     {
-        lv_obj_set_style_text_font(boot_items_[i].label, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_font(boot_items_[i].icon, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(boot_items_[i].label, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(boot_items_[i].label, lv_color_hex(cfg::color::kTextDim), 0);
-        lv_obj_set_style_text_color(boot_items_[i].icon, lv_color_hex(cfg::color::kTextDim), 0);
-        lv_label_set_text(boot_items_[i].icon, " ");
-        lv_obj_align(boot_items_[i].icon, LV_ALIGN_TOP_LEFT, line_x - 12, y0 + (step * i));
         char line[48] = {0};
-        snprintf(line, sizeof(line), "%-8s [..]", boot_items_[i].name);
+        snprintf(line, sizeof(line), "%-10s [..]", boot_items_[i].name);
         lv_label_set_text(boot_items_[i].label, line);
         lv_obj_align(boot_items_[i].label, LV_ALIGN_TOP_LEFT, line_x, y0 + (step * i));
     }
+
+    boot_progress_bar_ = lv_bar_create(screen);
+    lv_obj_set_size(boot_progress_bar_, 140, 8);
+    lv_obj_set_pos(boot_progress_bar_, 15, 130);
+    lv_bar_set_range(boot_progress_bar_, 0, 100);
+    lv_bar_set_value(boot_progress_bar_, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(boot_progress_bar_, lv_color_hex(0x1C1C1C), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(boot_progress_bar_, lv_color_hex(cfg::color::kValue), LV_PART_INDICATOR);
+    lv_obj_set_style_radius(boot_progress_bar_, 4, 0);
+
+    boot_percent_label_ = lv_label_create(screen);
+    lv_label_set_text(boot_percent_label_, "0%");
+    lv_obj_set_style_text_color(boot_percent_label_, lv_color_hex(cfg::color::kValue), 0);
+    lv_obj_set_style_text_font(boot_percent_label_, &lv_font_montserrat_12, 0);
+    lv_obj_align(boot_percent_label_, LV_ALIGN_TOP_MID, 0, 145);
 
     boot_version_ = lv_label_create(screen);
     lv_label_set_text(boot_version_, "v0.2.0");
@@ -776,10 +737,25 @@ void UiController::bootDiagUpdate(const BootDiagStatus &status)
         if (show)
         {
             char line[48] = {0};
-            snprintf(line, sizeof(line), "%-8s %s", item.name, status_str);
+            snprintf(line, sizeof(line), "%-10s %s", item.name, status_str);
             lv_label_set_text(item.label, line);
             lv_obj_set_style_text_color(item.label, lv_color_hex(color), 0);
         }
+    }
+
+    if (boot_progress_bar_ != nullptr && boot_percent_label_ != nullptr)
+    {
+        uint8_t pass_count = 0;
+        if (status.lcd_done && status.lcd_ok) pass_count++;
+        if (status.touch_done && status.touch_ok) pass_count++;
+        if (status.sensor_done && status.sensor_ok) pass_count++;
+
+        uint8_t progress_pct = static_cast<uint8_t>((pass_count * 100U) / 3U);
+        lv_bar_set_value(boot_progress_bar_, static_cast<int32_t>(progress_pct), LV_ANIM_OFF);
+
+        char pct_text[8] = {0};
+        snprintf(pct_text, sizeof(pct_text), "%d%%", progress_pct);
+        lv_label_set_text(boot_percent_label_, pct_text);
     }
 
     lv_tick_inc(20);
@@ -792,6 +768,13 @@ void UiController::bootDiagFinish(uint32_t hold_ms)
     if (!lvgl_ready_)
     {
         return;
+    }
+
+    if (boot_progress_bar_ != nullptr && boot_percent_label_ != nullptr)
+    {
+        lv_bar_set_value(boot_progress_bar_, 100, LV_ANIM_OFF);
+        lv_label_set_text(boot_percent_label_, "100%");
+        lv_obj_set_style_text_color(boot_percent_label_, lv_color_hex(cfg::color::kStatusOk), 0);
     }
 
     const uint32_t start = millis();
