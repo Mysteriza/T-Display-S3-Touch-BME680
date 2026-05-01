@@ -42,6 +42,9 @@ public:
     void taskLoop();
     static void taskEntry(void *parameter);
 
+    void markBootComplete();
+    void publicUpdateValues();
+
 private:
     UiController() = default;
     UiController(const UiController &) = delete;
@@ -71,6 +74,8 @@ private:
         lv_obj_t *storage = nullptr;
         lv_obj_t *cpu_bar = nullptr;
         lv_obj_t *mem_bar = nullptr;
+        lv_obj_t *battery_voltage = nullptr;
+        lv_obj_t *battery_bar = nullptr;
     };
 
 
@@ -89,7 +94,7 @@ private:
     lv_obj_t *createHeader(lv_obj_t *parent, const char *page_info, uint8_t page_index);
     lv_obj_t *createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
                               const char *title, lv_obj_t **value_label, const lv_font_t *value_font,
-                              const lv_font_t *title_font = nullptr);
+                              const lv_font_t *title_font = nullptr, bool center_align = false);
     lv_obj_t *createSingleLineCard(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
                                    const char *text, lv_obj_t **text_label, const lv_font_t *text_font);
 
@@ -143,6 +148,7 @@ private:
 
     uint8_t current_page_ = 0;
     uint32_t last_gesture_ms_ = 0;
+    uint32_t boot_complete_ms_ = 0;
 
     PageEnvData page_env_{};
     PageAqiData page_aqi_{};

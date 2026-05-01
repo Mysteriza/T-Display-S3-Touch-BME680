@@ -18,6 +18,7 @@ extern const lv_font_t lv_font_montserrat_32;
 extern const lv_font_t lv_font_montserrat_36;
 extern const lv_font_t lv_font_montserrat_48;
 extern const lv_font_t lv_font_montserrat_12;
+extern const lv_font_t lv_font_montserrat_16;
 
 #if !defined(LV_FONT_MONTSERRAT_18) || (LV_FONT_MONTSERRAT_18 == 0)
 #define lv_font_montserrat_18 lv_font_montserrat_14
@@ -42,6 +43,9 @@ extern const lv_font_t lv_font_montserrat_12;
 #endif
 #if !defined(LV_FONT_MONTSERRAT_12) || (LV_FONT_MONTSERRAT_12 == 0)
 #define lv_font_montserrat_12 lv_font_montserrat_14
+#endif
+#if !defined(LV_FONT_MONTSERRAT_16) || (LV_FONT_MONTSERRAT_16 == 0)
+#define lv_font_montserrat_16 lv_font_montserrat_14
 #endif
 
 UiController &UiController::instance()
@@ -680,7 +684,7 @@ void UiController::bootDiagBegin()
     lv_obj_align(boot_percent_label_, LV_ALIGN_TOP_MID, 0, 145);
 
     boot_version_ = lv_label_create(screen);
-    lv_label_set_text(boot_version_, "v0.2.0");
+    lv_label_set_text(boot_version_, "v0.3.0");
     lv_obj_set_style_text_color(boot_version_, lv_color_hex(cfg::color::kTextDim), 0);
     lv_obj_set_style_text_font(boot_version_, &lv_font_montserrat_12, 0);
     lv_obj_align(boot_version_, LV_ALIGN_BOTTOM_MID, 0, -4);
@@ -798,7 +802,7 @@ lv_obj_t *UiController::createHeader(lv_obj_t *parent, const char *page_info, ui
 
 lv_obj_t *UiController::createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
                                         const char *title, lv_obj_t **value_label, const lv_font_t *value_font,
-                                        const lv_font_t *title_font)
+                                        const lv_font_t *title_font, bool center_align)
 {
     lv_obj_t *card = lv_obj_create(parent);
     lv_obj_set_size(card, w, h);
@@ -817,13 +821,27 @@ lv_obj_t *UiController::createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord
     {
         lv_obj_set_style_text_font(title_label, title_font, 0);
     }
-    lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 0, 0);
+    if (center_align)
+    {
+        lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 0);
+    }
+    else
+    {
+        lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 0, 0);
+    }
 
     *value_label = lv_label_create(card);
     lv_label_set_text(*value_label, "--");
     lv_obj_set_style_text_color(*value_label, lv_color_hex(cfg::color::kValue), 0);
     lv_obj_set_style_text_font(*value_label, value_font, 0);
-    lv_obj_align(*value_label, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+    if (center_align)
+    {
+        lv_obj_align(*value_label, LV_ALIGN_BOTTOM_MID, 0, 2);
+    }
+    else
+    {
+        lv_obj_align(*value_label, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+    }
 
     return card;
 }
@@ -911,18 +929,18 @@ void UiController::buildPageAqi(lv_obj_t *parent)
     page_aqi_.gas_value = lv_label_create(parent);
     lv_label_set_text(page_aqi_.gas_value, "--.- kOhm");
     lv_obj_set_style_text_color(page_aqi_.gas_value, lv_color_hex(cfg::color::kValue), 0);
-    lv_obj_set_style_text_font(page_aqi_.gas_value, &lv_font_montserrat_22, 0);
-    lv_obj_align(page_aqi_.gas_value, LV_ALIGN_TOP_MID, 0, 40);
+    lv_obj_set_style_text_font(page_aqi_.gas_value, &lv_font_montserrat_18, 0);
+    lv_obj_align(page_aqi_.gas_value, LV_ALIGN_TOP_MID, 0, 38);
 
-    page_aqi_.gas_status_value = lv_label_create(parent);
-    lv_label_set_text(page_aqi_.gas_status_value, "INIT");
-    lv_obj_set_style_text_color(page_aqi_.gas_status_value, lv_color_hex(cfg::color::kBootChecking), 0);
-    lv_obj_set_style_text_font(page_aqi_.gas_status_value, &lv_font_montserrat_14, 0);
-    lv_obj_align(page_aqi_.gas_status_value, LV_ALIGN_TOP_MID, 0, 72);
-
-    createValueCard(parent, x0, cfg::display::kCardThirdRowY,
+    lv_obj_t *status_card = createValueCard(parent, x0, cfg::display::kCardSecondRowY,
                     cfg::display::kCardWidth, cfg::display::kCardHeight,
-                    "GAS TREND", &page_aqi_.gas_trend_value, &lv_font_montserrat_18);
+                    "GAS STATUS", &page_aqi_.gas_status_value, &lv_font_montserrat_16, nullptr, true);
+    (void)status_card;
+
+    lv_obj_t *trend_card = createValueCard(parent, x0, cfg::display::kCardThirdRowY,
+                    cfg::display::kCardWidth, cfg::display::kCardHeight,
+                    "GAS TREND", &page_aqi_.gas_trend_value, &lv_font_montserrat_16, nullptr, true);
+    (void)trend_card;
 }
 
 void UiController::buildPageSys(lv_obj_t *parent)
@@ -945,38 +963,54 @@ void UiController::buildPageSys(lv_obj_t *parent)
     page_sys_.uptime = lv_label_create(parent);
     lv_label_set_text(page_sys_.uptime, "00:00:00");
     lv_obj_set_style_text_color(page_sys_.uptime, lv_color_hex(cfg::color::kValue), 0);
-    lv_obj_set_style_text_font(page_sys_.uptime, &lv_font_montserrat_22, 0);
-    lv_obj_align(page_sys_.uptime, LV_ALIGN_TOP_MID, 0, 40);
+    lv_obj_set_style_text_font(page_sys_.uptime, &lv_font_montserrat_18, 0);
+    lv_obj_align(page_sys_.uptime, LV_ALIGN_TOP_MID, 0, 35);
 
     const lv_coord_t left_x = cfg::display::kMarginLeft;
+    constexpr lv_coord_t kSmallCardH = 50;
+    constexpr lv_coord_t kGap = 6;
 
-    lv_obj_t *cpu_card = createValueCard(parent, left_x, 80,
-                                         cfg::display::kCardWidth, cfg::display::kCardHeight,
-                                         "CPU Load", &page_sys_.cpu_load, &lv_font_montserrat_18);
+    lv_obj_t *cpu_card = createValueCard(parent, left_x, 70,
+                                         cfg::display::kCardWidth, kSmallCardH,
+                                         "CPU Load", &page_sys_.cpu_load, &lv_font_montserrat_14);
     (void)cpu_card;
 
     page_sys_.cpu_bar = lv_bar_create(parent);
-    lv_obj_set_size(page_sys_.cpu_bar, 154, 6);
-    lv_obj_set_pos(page_sys_.cpu_bar, left_x, 80 + cfg::display::kCardHeight + 4);
+    lv_obj_set_size(page_sys_.cpu_bar, 154, 4);
+    lv_obj_set_pos(page_sys_.cpu_bar, left_x, 70 + kSmallCardH + 2);
     lv_bar_set_range(page_sys_.cpu_bar, 0, 100);
     lv_bar_set_value(page_sys_.cpu_bar, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(page_sys_.cpu_bar, lv_color_hex(0x1C1C1C), LV_PART_MAIN);
     lv_obj_set_style_bg_color(page_sys_.cpu_bar, lv_color_hex(cfg::color::kValue), LV_PART_INDICATOR);
-    lv_obj_set_style_radius(page_sys_.cpu_bar, 3, 0);
+    lv_obj_set_style_radius(page_sys_.cpu_bar, 2, 0);
 
-    lv_obj_t *mem_card = createValueCard(parent, left_x, 160,
-                                         cfg::display::kCardWidth, cfg::display::kCardHeight,
-                                         "Free Memory", &page_sys_.storage, &lv_font_montserrat_18);
+    lv_obj_t *mem_card = createValueCard(parent, left_x, 130,
+                                         cfg::display::kCardWidth, kSmallCardH,
+                                         "Free Memory", &page_sys_.storage, &lv_font_montserrat_14);
     (void)mem_card;
 
     page_sys_.mem_bar = lv_bar_create(parent);
-    lv_obj_set_size(page_sys_.mem_bar, 154, 6);
-    lv_obj_set_pos(page_sys_.mem_bar, left_x, 160 + cfg::display::kCardHeight + 4);
+    lv_obj_set_size(page_sys_.mem_bar, 154, 4);
+    lv_obj_set_pos(page_sys_.mem_bar, left_x, 130 + kSmallCardH + 2);
     lv_bar_set_range(page_sys_.mem_bar, 0, 100);
     lv_bar_set_value(page_sys_.mem_bar, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(page_sys_.mem_bar, lv_color_hex(0x1C1C1C), LV_PART_MAIN);
     lv_obj_set_style_bg_color(page_sys_.mem_bar, lv_color_hex(cfg::color::kValue), LV_PART_INDICATOR);
-    lv_obj_set_style_radius(page_sys_.mem_bar, 3, 0);
+    lv_obj_set_style_radius(page_sys_.mem_bar, 2, 0);
+
+    lv_obj_t *bat_card = createValueCard(parent, left_x, 190,
+                                         cfg::display::kCardWidth, kSmallCardH,
+                                         "Battery", &page_sys_.battery_voltage, &lv_font_montserrat_14);
+    (void)bat_card;
+
+    page_sys_.battery_bar = lv_bar_create(parent);
+    lv_obj_set_size(page_sys_.battery_bar, 154, 4);
+    lv_obj_set_pos(page_sys_.battery_bar, left_x, 190 + kSmallCardH + 2);
+    lv_bar_set_range(page_sys_.battery_bar, 0, 100);
+    lv_bar_set_value(page_sys_.battery_bar, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(page_sys_.battery_bar, lv_color_hex(0x1C1C1C), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(page_sys_.battery_bar, lv_color_hex(cfg::color::kValue), LV_PART_INDICATOR);
+    lv_obj_set_style_radius(page_sys_.battery_bar, 2, 0);
 }
 
 void UiController::setPage(uint8_t page_index)
@@ -1252,10 +1286,26 @@ void UiController::updateBatteryLabels()
 void UiController::updateEnvStatusLabels()
 {
     const SensorData env = SensorManager::instance().getData();
-    const bool sensor_connected = env.valid && env.last_update_ms != 0U;
+    const bool data_valid = env.valid && (env.last_update_ms != 0U);
 
-    const uint32_t color = sensor_connected ? cfg::color::kValue : cfg::color::kError;
-    const char *text = sensor_connected ? LV_SYMBOL_OK " ENV" : LV_SYMBOL_CLOSE " ENV";
+    uint32_t color;
+    const char *text;
+
+    if (data_valid)
+    {
+        color = cfg::color::kValue;
+        text = LV_SYMBOL_OK " ENV";
+    }
+    else if (env.last_update_ms != 0U)
+    {
+        color = cfg::color::kBootChecking;
+        text = "~ ENV";
+    }
+    else
+    {
+        color = cfg::color::kError;
+        text = LV_SYMBOL_CLOSE " ENV";
+    }
 
     for (uint8_t i = 0; i < 3U; ++i)
     {
@@ -1265,6 +1315,16 @@ void UiController::updateEnvStatusLabels()
             lv_obj_set_style_text_color(env_status_labels_[i], lv_color_hex(color), 0);
         }
     }
+}
+
+void UiController::markBootComplete()
+{
+    boot_complete_ms_ = millis();
+}
+
+void UiController::publicUpdateValues()
+{
+    updateValues();
 }
 
 void UiController::updateValues()
@@ -1309,24 +1369,55 @@ void UiController::updateValues()
                 }
                 else
                 {
-                    lv_label_set_text_fmt(page_aqi_.gas_value, "%.1f kOhm", env.gas_resistance_kohm);
+                    char buf[32];
+                    int val = static_cast<int>(env.gas_resistance_kohm * 10);
+                    if (val >= 10000)
+                        snprintf(buf, sizeof(buf), "%d kOhm", val / 10);
+                    else
+                        snprintf(buf, sizeof(buf), "%d.%d kOhm", val / 10, val % 10);
+                    lv_label_set_text(page_aqi_.gas_value, buf);
                 }
             }
 
             if (page_aqi_.gas_status_value != nullptr)
             {
-                const char *status_text = "Good";
-                uint32_t status_color = cfg::color::kStatusOk;
+                const char *status_text = "--";
+                uint32_t status_color = cfg::color::kTextDim;
 
-                if (env.gas_resistance_kohm < 20.0f)
+                if (env.gas_resistance_kohm >= 100.0f)
                 {
-                    status_text = "Poor";
+                    status_text = "EXCELLENT";
+                    status_color = cfg::color::kStatusOk;
+                }
+                else if (env.gas_resistance_kohm >= 50.0f)
+                {
+                    status_text = "GOOD";
+                    status_color = cfg::color::kStatusOk;
+                }
+                else if (env.gas_resistance_kohm >= 30.0f)
+                {
+                    status_text = "FAIR";
+                    status_color = 0x5DADE2;
+                }
+                else if (env.gas_resistance_kohm >= 20.0f)
+                {
+                    status_text = "MODERATE";
+                    status_color = cfg::color::kBootChecking;
+                }
+                else if (env.gas_resistance_kohm >= 10.0f)
+                {
+                    status_text = "POOR";
+                    status_color = 0xFF8C32;
+                }
+                else if (env.gas_resistance_kohm >= 5.0f)
+                {
+                    status_text = "V.POOR";
                     status_color = cfg::color::kError;
                 }
-                else if (env.gas_resistance_kohm < 50.0f)
+                else if (env.gas_resistance_kohm >= 1.0f)
                 {
-                    status_text = "Moderate";
-                    status_color = cfg::color::kBootChecking;
+                    status_text = "HAZARD";
+                    status_color = cfg::color::kError;
                 }
 
                 lv_label_set_text(page_aqi_.gas_status_value, status_text);
@@ -1413,6 +1504,40 @@ void UiController::updateValues()
             if (free_pct < 20) bar_color = cfg::color::kError;
             else if (free_pct < 40) bar_color = cfg::color::kBootChecking;
             lv_obj_set_style_bg_color(page_sys_.mem_bar, lv_color_hex(bar_color), LV_PART_INDICATOR);
+        }
+        if (page_sys_.battery_voltage != nullptr || page_sys_.battery_bar != nullptr)
+        {
+            bool has_battery = false;
+            uint32_t mv = readBatteryMv(&has_battery);
+            uint8_t pct = 0;
+            if (has_battery)
+            {
+                pct = batteryPercentFromMv(estimateBatteryOcvMv(mv, display_awake));
+            }
+            else
+            {
+                pct = 100;
+            }
+
+            if (page_sys_.battery_voltage != nullptr)
+            {
+                if (has_battery)
+                {
+                    lv_label_set_text_fmt(page_sys_.battery_voltage, "%u%% (%u.%02uV)", pct, mv / 1000, (mv % 1000) / 10);
+                }
+                else
+                {
+                    lv_label_set_text(page_sys_.battery_voltage, "USB Powered");
+                }
+                uint32_t text_color = has_battery ? static_cast<uint32_t>(batteryColorFromPercent(pct, !has_battery).full) : cfg::color::kStatusOk;
+                lv_obj_set_style_text_color(page_sys_.battery_voltage, lv_color_hex(text_color), 0);
+            }
+            if (page_sys_.battery_bar != nullptr)
+            {
+                lv_bar_set_value(page_sys_.battery_bar, static_cast<int32_t>(pct), LV_ANIM_OFF);
+                uint32_t bar_color = has_battery ? static_cast<uint32_t>(batteryColorFromPercent(pct, !has_battery).full) : cfg::color::kStatusOk;
+                lv_obj_set_style_bg_color(page_sys_.battery_bar, lv_color_hex(bar_color), LV_PART_INDICATOR);
+            }
         }
     }
 }
