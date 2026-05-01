@@ -821,7 +821,14 @@ lv_obj_t *UiController::createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord
     {
         lv_obj_set_style_text_font(title_label, title_font, 0);
     }
-    lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 0, 0);
+    if (center_align)
+    {
+        lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 0);
+    }
+    else
+    {
+        lv_obj_align(title_label, LV_ALIGN_TOP_LEFT, 0, 0);
+    }
 
     *value_label = lv_label_create(card);
     lv_label_set_text(*value_label, "--");
@@ -1374,18 +1381,43 @@ void UiController::updateValues()
 
             if (page_aqi_.gas_status_value != nullptr)
             {
-                const char *status_text = "GOOD";
-                uint32_t status_color = cfg::color::kStatusOk;
+                const char *status_text = "--";
+                uint32_t status_color = cfg::color::kTextDim;
 
-                if (env.gas_resistance_kohm < 20.0f)
+                if (env.gas_resistance_kohm >= 100.0f)
                 {
-                    status_text = "POOR";
-                    status_color = cfg::color::kError;
+                    status_text = "EXCELLENT";
+                    status_color = cfg::color::kStatusOk;
                 }
-                else if (env.gas_resistance_kohm < 50.0f)
+                else if (env.gas_resistance_kohm >= 50.0f)
+                {
+                    status_text = "GOOD";
+                    status_color = cfg::color::kStatusOk;
+                }
+                else if (env.gas_resistance_kohm >= 30.0f)
+                {
+                    status_text = "FAIR";
+                    status_color = 0x5DADE2;
+                }
+                else if (env.gas_resistance_kohm >= 20.0f)
                 {
                     status_text = "MODERATE";
                     status_color = cfg::color::kBootChecking;
+                }
+                else if (env.gas_resistance_kohm >= 10.0f)
+                {
+                    status_text = "POOR";
+                    status_color = 0xFF8C32;
+                }
+                else if (env.gas_resistance_kohm >= 5.0f)
+                {
+                    status_text = "V.POOR";
+                    status_color = cfg::color::kError;
+                }
+                else if (env.gas_resistance_kohm >= 1.0f)
+                {
+                    status_text = "HAZARD";
+                    status_color = cfg::color::kError;
                 }
 
                 lv_label_set_text(page_aqi_.gas_status_value, status_text);
