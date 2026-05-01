@@ -136,14 +136,9 @@ private:
     lv_obj_t *boot_title_ = nullptr;
     lv_obj_t *boot_subtitle_ = nullptr;
     lv_obj_t *boot_version_ = nullptr;
-    BootItem boot_items_[4] = {};
-    uint8_t boot_current_item_ = 0;
-    bool boot_animating_ = false;
-    uint8_t boot_animation_step_ = 0;
-    uint32_t boot_last_anim_ms_ = 0;
+    BootItem boot_items_[3] = {};
 
     lv_obj_t *pages_[3] = {nullptr, nullptr, nullptr};
-    lv_obj_t *env_headers_[3] = {nullptr, nullptr, nullptr};
     lv_obj_t *battery_labels_[3] = {nullptr, nullptr, nullptr};
     lv_obj_t *env_status_labels_[3] = {nullptr, nullptr, nullptr};
 
@@ -168,12 +163,10 @@ private:
     uint32_t bat_last_sample_ms_ = 0;
     uint32_t bat_last_label_ms_ = 0;
 
-    uint32_t last_ui_refresh_ms_ = 0;
     uint32_t last_env_snapshot_ms_ = 0;
     uint32_t last_uptime_refresh_ms_ = 0;
     uint32_t last_cpu_refresh_ms_ = 0;
     uint32_t last_sys_info_refresh_ms_ = 0;
-    uint32_t last_bg_ui_refresh_ms_ = 0;
 
     float cpu_load_estimate_pct_ = 0.0f;
 };

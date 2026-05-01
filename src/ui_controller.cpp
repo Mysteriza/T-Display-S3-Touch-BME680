@@ -723,11 +723,6 @@ void UiController::bootDiagBegin()
     lv_obj_set_style_text_font(boot_version_, &lv_font_montserrat_12, 0);
     lv_obj_align(boot_version_, LV_ALIGN_BOTTOM_MID, 0, -4);
 
-    boot_current_item_ = 0;
-    boot_animating_ = false;
-    boot_animation_step_ = 0;
-    boot_last_anim_ms_ = 0;
-
     lv_scr_load(screen);
 }
 
@@ -815,11 +810,6 @@ lv_obj_t *UiController::createHeader(lv_obj_t *parent, const char *page_info, ui
     lv_obj_set_style_text_color(title, lv_color_hex(cfg::color::kTextPrimary), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_BOTTOM_MID, 0, -8);
-
-    if (page_index < 4U)
-    {
-        env_headers_[page_index] = title;
-    }
 
     return title;
 }
@@ -1068,7 +1058,6 @@ void UiController::buildPages()
     setPage(0);
     lv_scr_load(root);
 
-    last_ui_refresh_ms_ = millis();
     updateBatteryLabels();
     updateValues();
 }
@@ -1140,7 +1129,7 @@ void UiController::onGesture(lv_event_t *event)
         return;
     }
 
-    constexpr uint32_t kTapCooldownMs = 300U;
+    constexpr uint32_t kTapCooldownMs = 150U;
     const uint32_t now_ms = millis();
     if ((now_ms - last_gesture_ms_) < kTapCooldownMs)
     {
@@ -1482,15 +1471,6 @@ void UiController::taskLoop()
         if (display_awake)
         {
             updateValues();
-        }
-        else
-        {
-            const uint32_t now_ms = millis();
-            if ((last_bg_ui_refresh_ms_ == 0U) || (now_ms - last_bg_ui_refresh_ms_ >= cfg::timing::kUiBackgroundRefreshMs))
-            {
-                last_bg_ui_refresh_ms_ = now_ms;
-                updateValues();
-            }
         }
 
         updateBatteryLabels();

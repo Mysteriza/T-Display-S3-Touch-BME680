@@ -49,7 +49,6 @@ namespace cfg
 
         inline constexpr uint32_t kUiTaskActiveDelayMs = 16UL;
         inline constexpr uint32_t kUiTaskSleepDelayMs = 120UL;
-        inline constexpr uint32_t kUiBackgroundRefreshMs = kSensorRefreshMs;
 
         inline constexpr uint32_t kSensorTaskDelayMs = 200UL;
         inline constexpr uint32_t kSensorInitRetryMs = 1000UL;
