@@ -16,8 +16,6 @@ struct BootDiagStatus
     bool touch_ok = false;
     bool sensor_done = false;
     bool sensor_ok = false;
-    bool data_done = false;
-    bool data_ok = false;
 };
 
 struct BootItem
@@ -62,12 +60,10 @@ private:
 
     struct PageAqiData
     {
-        lv_obj_t *gas_title = nullptr;
         lv_obj_t *gas_value = nullptr;
         lv_obj_t *gas_status_value = nullptr;
         lv_obj_t *gas_trend_title = nullptr;
         lv_obj_t *gas_trend_value = nullptr;
-        lv_obj_t *gas_arc = nullptr;
     };
 
     struct PageSysData
@@ -75,6 +71,8 @@ private:
         lv_obj_t *uptime = nullptr;
         lv_obj_t *cpu_load = nullptr;
         lv_obj_t *storage = nullptr;
+        lv_obj_t *cpu_bar = nullptr;
+        lv_obj_t *mem_bar = nullptr;
     };
 
 
@@ -116,6 +114,7 @@ private:
     int32_t roundToInt(float value) const;
 
     void setBootLine(lv_obj_t *label, const char *name, bool done, bool ok);
+    void updateEnvStatusLabels();
 
 private:
     TFT_eSPI tft_;
@@ -146,8 +145,10 @@ private:
     lv_obj_t *pages_[3] = {nullptr, nullptr, nullptr};
     lv_obj_t *env_headers_[3] = {nullptr, nullptr, nullptr};
     lv_obj_t *battery_labels_[3] = {nullptr, nullptr, nullptr};
+    lv_obj_t *env_status_labels_[3] = {nullptr, nullptr, nullptr};
 
     uint8_t current_page_ = 0;
+    uint32_t last_gesture_ms_ = 0;
 
     PageEnvData page_env_{};
     PageAqiData page_aqi_{};
