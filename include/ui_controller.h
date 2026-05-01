@@ -16,19 +16,13 @@ struct BootDiagStatus
     bool touch_ok = false;
     bool sensor_done = false;
     bool sensor_ok = false;
-    bool data_done = false;
-    bool data_ok = false;
-    bool wifi_done = false;
-    bool wifi_ok = false;
 };
 
 struct BootItem
 {
-    lv_obj_t *label = nullptr;
-    lv_obj_t *icon = nullptr;
+    lv_obj_t *name_label = nullptr;
+    lv_obj_t *status_label = nullptr;
     const char *name = nullptr;
-    bool done = false;
-    bool ok = false;
 };
 
 class UiController
@@ -64,12 +58,10 @@ private:
 
     struct PageAqiData
     {
-        lv_obj_t *gas_title = nullptr;
         lv_obj_t *gas_value = nullptr;
         lv_obj_t *gas_status_value = nullptr;
         lv_obj_t *gas_trend_title = nullptr;
         lv_obj_t *gas_trend_value = nullptr;
-        lv_obj_t *gas_arc = nullptr;
     };
 
     struct PageSysData
@@ -77,20 +69,10 @@ private:
         lv_obj_t *uptime = nullptr;
         lv_obj_t *cpu_load = nullptr;
         lv_obj_t *storage = nullptr;
-        lv_obj_t *wifi_status = nullptr;
-        lv_obj_t *weather_update = nullptr;
+        lv_obj_t *cpu_bar = nullptr;
+        lv_obj_t *mem_bar = nullptr;
     };
 
-    struct PageOutdoorData
-    {
-        lv_obj_t *no_wifi = nullptr;
-        lv_obj_t *datetime = nullptr;
-        lv_obj_t *weather_status = nullptr;
-        lv_obj_t *temp = nullptr;
-        lv_obj_t *humidity = nullptr;
-        lv_obj_t *rain = nullptr;
-        lv_obj_t *clouds = nullptr;
-    };
 
     static void displayFlushCallback(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p);
     static void touchReadCallback(lv_indev_drv_t *drv, lv_indev_data_t *data);
@@ -103,7 +85,6 @@ private:
     void buildPageEnv(lv_obj_t *parent);
     void buildPageAqi(lv_obj_t *parent);
     void buildPageSys(lv_obj_t *parent);
-    void buildPageOutdoors(lv_obj_t *parent);
 
     lv_obj_t *createHeader(lv_obj_t *parent, const char *page_info, uint8_t page_index);
     lv_obj_t *createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
@@ -130,7 +111,7 @@ private:
     int32_t clampI32(int32_t value, int32_t low, int32_t high) const;
     int32_t roundToInt(float value) const;
 
-    void setBootLine(lv_obj_t *label, const char *name, bool done, bool ok);
+    void updateEnvStatusLabels();
 
 private:
     TFT_eSPI tft_;
@@ -152,23 +133,20 @@ private:
     lv_obj_t *boot_title_ = nullptr;
     lv_obj_t *boot_subtitle_ = nullptr;
     lv_obj_t *boot_version_ = nullptr;
-    BootItem boot_items_[5] = {};
-    uint8_t boot_current_item_ = 0;
-    bool boot_animating_ = false;
-    uint8_t boot_animation_step_ = 0;
-    uint32_t boot_last_anim_ms_ = 0;
+    lv_obj_t *boot_progress_bar_ = nullptr;
+    lv_obj_t *boot_percent_label_ = nullptr;
+    BootItem boot_items_[3] = {};
 
-    lv_obj_t *pages_[4] = {nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t *env_headers_[4] = {nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t *battery_labels_[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t *pages_[3] = {nullptr, nullptr, nullptr};
+    lv_obj_t *battery_labels_[3] = {nullptr, nullptr, nullptr};
+    lv_obj_t *env_status_labels_[3] = {nullptr, nullptr, nullptr};
 
     uint8_t current_page_ = 0;
+    uint32_t last_gesture_ms_ = 0;
 
     PageEnvData page_env_{};
     PageAqiData page_aqi_{};
     PageSysData page_sys_{};
-    PageOutdoorData page_outdoor_{};
-    bool outdoor_page_enabled_ = false;
 
     esp_adc_cal_characteristics_t battery_adc_chars_{};
     bool battery_adc_ready_ = false;
@@ -184,15 +162,10 @@ private:
     uint32_t bat_last_sample_ms_ = 0;
     uint32_t bat_last_label_ms_ = 0;
 
-    uint32_t last_ui_refresh_ms_ = 0;
     uint32_t last_env_snapshot_ms_ = 0;
     uint32_t last_uptime_refresh_ms_ = 0;
     uint32_t last_cpu_refresh_ms_ = 0;
     uint32_t last_sys_info_refresh_ms_ = 0;
-    uint32_t last_wifi_status_refresh_ms_ = 0;
-    uint32_t last_fetch_label_refresh_ms_ = 0;
-    uint32_t last_bg_ui_refresh_ms_ = 0;
-    uint32_t last_outdoor_refresh_ms_ = 0;
 
     float cpu_load_estimate_pct_ = 0.0f;
 };

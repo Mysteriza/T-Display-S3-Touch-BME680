@@ -7,7 +7,6 @@
 #include <string.h>
 
 #include "config.h"
-#include "wifi_manager.h"
 
 SerialCLI::SerialCLI(SensorManager &sensor_manager) : sensor_manager_(sensor_manager)
 {
@@ -173,30 +172,8 @@ void SerialCLI::handleCommand(char *line)
         }
     }
 
-    if ((argc >= 2U) && (strcmp(argv[0], "wifi") == 0) && (strcmp(argv[1], "status") == 0))
-    {
-        WiFiManager::instance().printStatus(Serial);
-        return;
-    }
 
-    if ((argc >= 2U) && (strcmp(argv[0], "weather") == 0) && (strcmp(argv[1], "status") == 0))
-    {
-        WiFiManager::instance().printStatus(Serial);
-        return;
-    }
 
-    if ((argc >= 3U) && (strcmp(argv[0], "weather") == 0) && (strcmp(argv[1], "fetch") == 0) && (strcmp(argv[2], "now") == 0))
-    {
-        if (WiFiManager::instance().forceFetchNow())
-        {
-            Serial.println("[CMD] weather fetch succeeded.");
-        }
-        else
-        {
-            Serial.printf("[CMD] weather fetch failed (reason=%s).\n", WiFiManager::instance().lastErrorText());
-        }
-        return;
-    }
 
     Serial.printf("[CMD] unknown command: %s\n", original);
     Serial.println("[CMD] type 'help' for available commands.");
