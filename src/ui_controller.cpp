@@ -18,6 +18,7 @@ extern const lv_font_t lv_font_montserrat_32;
 extern const lv_font_t lv_font_montserrat_36;
 extern const lv_font_t lv_font_montserrat_48;
 extern const lv_font_t lv_font_montserrat_12;
+extern const lv_font_t lv_font_montserrat_16;
 
 #if !defined(LV_FONT_MONTSERRAT_18) || (LV_FONT_MONTSERRAT_18 == 0)
 #define lv_font_montserrat_18 lv_font_montserrat_14
@@ -42,6 +43,9 @@ extern const lv_font_t lv_font_montserrat_12;
 #endif
 #if !defined(LV_FONT_MONTSERRAT_12) || (LV_FONT_MONTSERRAT_12 == 0)
 #define lv_font_montserrat_12 lv_font_montserrat_14
+#endif
+#if !defined(LV_FONT_MONTSERRAT_16) || (LV_FONT_MONTSERRAT_16 == 0)
+#define lv_font_montserrat_16 lv_font_montserrat_14
 #endif
 
 UiController &UiController::instance()
@@ -798,7 +802,7 @@ lv_obj_t *UiController::createHeader(lv_obj_t *parent, const char *page_info, ui
 
 lv_obj_t *UiController::createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
                                         const char *title, lv_obj_t **value_label, const lv_font_t *value_font,
-                                        const lv_font_t *title_font)
+                                        const lv_font_t *title_font, bool center_align)
 {
     lv_obj_t *card = lv_obj_create(parent);
     lv_obj_set_size(card, w, h);
@@ -823,7 +827,14 @@ lv_obj_t *UiController::createValueCard(lv_obj_t *parent, lv_coord_t x, lv_coord
     lv_label_set_text(*value_label, "--");
     lv_obj_set_style_text_color(*value_label, lv_color_hex(cfg::color::kValue), 0);
     lv_obj_set_style_text_font(*value_label, value_font, 0);
-    lv_obj_align(*value_label, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+    if (center_align)
+    {
+        lv_obj_align(*value_label, LV_ALIGN_BOTTOM_MID, 0, 2);
+    }
+    else
+    {
+        lv_obj_align(*value_label, LV_ALIGN_BOTTOM_LEFT, 0, 2);
+    }
 
     return card;
 }
@@ -912,22 +923,16 @@ void UiController::buildPageAqi(lv_obj_t *parent)
     lv_label_set_text(page_aqi_.gas_value, "--.- kOhm");
     lv_obj_set_style_text_color(page_aqi_.gas_value, lv_color_hex(cfg::color::kValue), 0);
     lv_obj_set_style_text_font(page_aqi_.gas_value, &lv_font_montserrat_18, 0);
-    lv_obj_align(page_aqi_.gas_value, LV_ALIGN_TOP_MID, 0, 40);
+    lv_obj_align(page_aqi_.gas_value, LV_ALIGN_TOP_MID, 0, 38);
 
-    page_aqi_.gas_status_value = lv_label_create(parent);
-    lv_label_set_text(page_aqi_.gas_status_value, "INIT");
-    lv_obj_set_style_text_color(page_aqi_.gas_status_value, lv_color_hex(cfg::color::kBootChecking), 0);
-    lv_obj_set_style_text_font(page_aqi_.gas_status_value, &lv_font_montserrat_12, 0);
-    lv_obj_align(page_aqi_.gas_status_value, LV_ALIGN_TOP_MID, 0, 65);
+    lv_obj_t *status_card = createValueCard(parent, x0, cfg::display::kCardSecondRowY,
+                    cfg::display::kCardWidth, cfg::display::kCardHeight,
+                    "GAS STATUS", &page_aqi_.gas_status_value, &lv_font_montserrat_16, nullptr, true);
+    (void)status_card;
 
     lv_obj_t *trend_card = createValueCard(parent, x0, cfg::display::kCardThirdRowY,
                     cfg::display::kCardWidth, cfg::display::kCardHeight,
-                    "GAS TREND", &page_aqi_.gas_trend_value, &lv_font_montserrat_14);
-    lv_obj_set_style_text_align(trend_card, LV_TEXT_ALIGN_CENTER, 0);
-    if (page_aqi_.gas_trend_value != nullptr)
-    {
-        lv_obj_set_style_text_align(page_aqi_.gas_trend_value, LV_TEXT_ALIGN_CENTER, 0);
-    }
+                    "GAS TREND", &page_aqi_.gas_trend_value, &lv_font_montserrat_16, nullptr, true);
     (void)trend_card;
 }
 
@@ -1305,6 +1310,16 @@ void UiController::updateEnvStatusLabels()
     }
 }
 
+void UiController::markBootComplete()
+{
+    boot_complete_ms_ = millis();
+}
+
+void UiController::publicUpdateValues()
+{
+    updateValues();
+}
+
 void UiController::updateValues()
 {
     const uint32_t now_ms = millis();
@@ -1345,29 +1360,31 @@ void UiController::updateValues()
                 {
                     lv_label_set_text(page_aqi_.gas_value, "--.- kOhm");
                 }
-                else if (env.gas_resistance_kohm >= 1000.0f)
-                {
-                    lv_label_set_text_fmt(page_aqi_.gas_value, "%.0f kOhm", env.gas_resistance_kohm);
-                }
                 else
                 {
-                    lv_label_set_text_fmt(page_aqi_.gas_value, "%.1f kOhm", env.gas_resistance_kohm);
+                    char buf[32];
+                    int val = static_cast<int>(env.gas_resistance_kohm * 10);
+                    if (val >= 10000)
+                        snprintf(buf, sizeof(buf), "%d kOhm", val / 10);
+                    else
+                        snprintf(buf, sizeof(buf), "%d.%d kOhm", val / 10, val % 10);
+                    lv_label_set_text(page_aqi_.gas_value, buf);
                 }
             }
 
             if (page_aqi_.gas_status_value != nullptr)
             {
-                const char *status_text = "Good";
+                const char *status_text = "GOOD";
                 uint32_t status_color = cfg::color::kStatusOk;
 
                 if (env.gas_resistance_kohm < 20.0f)
                 {
-                    status_text = "Poor";
+                    status_text = "POOR";
                     status_color = cfg::color::kError;
                 }
                 else if (env.gas_resistance_kohm < 50.0f)
                 {
-                    status_text = "Moderate";
+                    status_text = "MODERATE";
                     status_color = cfg::color::kBootChecking;
                 }
 

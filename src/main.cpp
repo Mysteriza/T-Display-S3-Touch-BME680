@@ -76,8 +76,10 @@ void setup()
   printBootReadinessChecklist(boot_status, sensor_manager);
 
   ui.bootDiagFinish(3000);
+  ui.markBootComplete();
 
   ui.buildPages();
+  ui.publicUpdateValues();
 
   xTaskCreatePinnedToCore(UiController::taskEntry, "uiTask", 12288, &ui, 2, nullptr, 1);
 }
