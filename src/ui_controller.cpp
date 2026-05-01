@@ -644,23 +644,24 @@ void UiController::bootDiagBegin()
     const lv_coord_t y0 = 50;
     const lv_coord_t step = 18;
 
-    boot_items_[0].label = lv_label_create(screen);
     boot_items_[0].name = "LCD";
-
-    boot_items_[1].label = lv_label_create(screen);
     boot_items_[1].name = "Touch";
-
-    boot_items_[2].label = lv_label_create(screen);
     boot_items_[2].name = "Sensor";
 
     for (uint8_t i = 0; i < 3U; ++i)
     {
-        lv_obj_set_style_text_font(boot_items_[i].label, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(boot_items_[i].label, lv_color_hex(cfg::color::kTextDim), 0);
-        char line[48] = {0};
-        snprintf(line, sizeof(line), "%-10s [..]", boot_items_[i].name);
-        lv_label_set_text(boot_items_[i].label, line);
-        lv_obj_align(boot_items_[i].label, LV_ALIGN_TOP_LEFT, line_x, y0 + (step * i));
+        boot_items_[i].name_label = lv_label_create(screen);
+        boot_items_[i].status_label = lv_label_create(screen);
+
+        lv_obj_set_style_text_font(boot_items_[i].name_label, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(boot_items_[i].name_label, lv_color_hex(cfg::color::kTextDim), 0);
+        lv_label_set_text(boot_items_[i].name_label, boot_items_[i].name);
+        lv_obj_align(boot_items_[i].name_label, LV_ALIGN_TOP_LEFT, line_x, y0 + (step * i));
+
+        lv_obj_set_style_text_font(boot_items_[i].status_label, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(boot_items_[i].status_label, lv_color_hex(cfg::color::kTextDim), 0);
+        lv_label_set_text(boot_items_[i].status_label, "[..]");
+        lv_obj_align(boot_items_[i].status_label, LV_ALIGN_TOP_RIGHT, -line_x, y0 + (step * i));
     }
 
     boot_progress_bar_ = lv_bar_create(screen);
@@ -697,7 +698,7 @@ void UiController::bootDiagUpdate(const BootDiagStatus &status)
     for (uint8_t i = 0; i < 3U; ++i)
     {
         const BootItem &item = boot_items_[i];
-        if (item.label == nullptr)
+        if (item.status_label == nullptr)
         {
             continue;
         }
@@ -736,10 +737,8 @@ void UiController::bootDiagUpdate(const BootDiagStatus &status)
 
         if (show)
         {
-            char line[48] = {0};
-            snprintf(line, sizeof(line), "%-10s %s", item.name, status_str);
-            lv_label_set_text(item.label, line);
-            lv_obj_set_style_text_color(item.label, lv_color_hex(color), 0);
+            lv_label_set_text(item.status_label, status_str);
+            lv_obj_set_style_text_color(item.status_label, lv_color_hex(color), 0);
         }
     }
 

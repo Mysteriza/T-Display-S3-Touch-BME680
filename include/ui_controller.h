@@ -20,7 +20,8 @@ struct BootDiagStatus
 
 struct BootItem
 {
-    lv_obj_t *label = nullptr;
+    lv_obj_t *name_label = nullptr;
+    lv_obj_t *status_label = nullptr;
     const char *name = nullptr;
 };
 
