@@ -71,6 +71,8 @@ private:
         lv_obj_t *storage = nullptr;
         lv_obj_t *cpu_bar = nullptr;
         lv_obj_t *mem_bar = nullptr;
+        lv_obj_t *battery_voltage = nullptr;
+        lv_obj_t *battery_bar = nullptr;
     };
 
 
